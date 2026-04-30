@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stage LED Mapping Tool – 3D → 2D Mapping</title>
+  <link rel="stylesheet" href="./styles/main.css" />
+  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230ea5e9'/><text x='50%' y='55%' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='16' dominant-baseline='middle'>L</text></svg>" />
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.161.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.161.0/examples/jsm/",
+        "fflate": "https://unpkg.com/fflate@0.8.2/esm/browser.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">L</div>
+      <div>
+        <div class="brand-title">Stage LED Mapping Tool</div>
+        <div class="brand-sub">3D phối cảnh sân khấu → mapping LED 2D</div>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <label class="btn btn-primary" title="Import file 3D (.gltf, .glb, .obj, .dae, .fbx)">
+        <input id="file-3d" type="file" accept=".gltf,.glb,.obj,.dae,.fbx" hidden />
+        <span class="btn-icon">📂</span> Mở file 3D
+      </label>
+      <label class="btn" title="Tải mapled tham chiếu (ảnh)">
+        <input id="file-mapled" type="file" accept="image/*" hidden />
+        <span class="btn-icon">🖼️</span> Mapled tham chiếu
+      </label>
+      <button id="btn-demo" class="btn" title="Tạo sân khấu demo có sẵn">
+        <span class="btn-icon">✨</span> Demo sân khấu
+      </button>
+      <div class="divider"></div>
+      <div class="mode-switch" role="tablist" aria-label="Chế độ làm việc">
+        <button id="mode-3d" class="mode-btn active" role="tab" aria-selected="true">3D Viewer</button>
+        <button id="mode-2d" class="mode-btn" role="tab" aria-selected="false">2D Mapping</button>
+      </div>
+      <div class="divider"></div>
+      <button id="btn-export" class="btn btn-success" title="Xuất cấu hình mapping JSON">
+        <span class="btn-icon">⬇️</span> Export
+      </button>
+      <button id="btn-import-config" class="btn" title="Nhập cấu hình JSON">
+        <label style="cursor:pointer">
+          <input id="file-config" type="file" accept=".json" hidden />
+          <span class="btn-icon">⬆️</span> Import config
+        </label>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT SIDEBAR: Object tree + LED list -->
+    <aside class="sidebar sidebar-left">
+      <div class="panel">
+        <div class="panel-header">
+          <span>Cây đối tượng</span>
+          <span id="obj-count" class="badge">0</span>
+        </div>
+        <div class="panel-body">
+          <div class="search-row">
+            <input id="search-obj" type="search" placeholder="Tìm theo tên..." />
+          </div>
+          <div class="auto-detect-row">
+            <button id="btn-autodetect" class="btn btn-sm">🔎 Tự động phát hiện LED</button>
+            <button id="btn-clear-led" class="btn btn-sm btn-ghost">Xoá tất cả LED</button>
+          </div>
+          <ul id="object-tree" class="object-tree"></ul>
+          <div id="empty-tree" class="empty-state">
+            <div>Chưa có model nào</div>
+            <small>Import file 3D từ SketchUp (xuất .dae / .obj / .gltf / .fbx) hoặc bấm "Demo sân khấu"</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <span>Danh sách LED</span>
+          <span id="led-count" class="badge badge-accent">0</span>
+        </div>
+        <div class="panel-body">
+          <ul id="led-list" class="led-list"></ul>
+          <div id="empty-led" class="empty-state">
+            <div>Chưa có LED nào</div>
+            <small>Click vào object trong 3D hoặc trong cây để đánh dấu là LED</small>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- CENTER: 3D / 2D canvas -->
+    <section class="workspace">
+      <div id="view-3d" class="view view-active">
+        <div id="three-container" class="three-container"></div>
+        <div class="view-toolbar">
+          <button id="cam-front" class="tool-btn" title="Mặt trước (F)">F</button>
+          <button id="cam-top" class="tool-btn" title="Mặt trên (T)">T</button>
+          <button id="cam-left" class="tool-btn" title="Mặt trái (L)">L</button>
+          <button id="cam-right" class="tool-btn" title="Mặt phải (R)">R</button>
+          <button id="cam-iso" class="tool-btn" title="Iso (I)">ISO</button>
+          <span class="tool-sep"></span>
+          <button id="cam-fit" class="tool-btn" title="Fit khung hình (Space)">⤢ Fit</button>
+          <button id="toggle-grid" class="tool-btn active" title="Bật/tắt lưới">▦ Grid</button>
+          <button id="toggle-wire" class="tool-btn" title="Wireframe">▢ Wire</button>
+        </div>
+        <div class="view-hint">
+          <kbd>Click</kbd> chọn LED · <kbd>Shift+Click</kbd> chọn nhiều ·
+          <kbd>Chuột phải</kbd> xoay · <kbd>Lăn chuột</kbd> zoom · <kbd>Chuột giữa</kbd> pan
+        </div>
+        <div id="loading-overlay" class="loading-overlay hidden">
+          <div class="spinner"></div>
+          <div id="loading-text">Đang tải model...</div>
+        </div>
+      </div>
+
+      <div id="view-2d" class="view">
+        <div class="canvas2d-toolbar">
+          <div class="tool-group">
+            <label class="tool-label">Tỷ lệ:</label>
+            <select id="scale-select">
+              <option value="1">100%</option>
+              <option value="2">200%</option>
+              <option value="0.5">50%</option>
+              <option value="0.25">25%</option>
+            </select>
+          </div>
+          <div class="tool-group">
+            <label class="tool-label">Lưới:</label>
+            <input id="grid-size" type="number" min="1" max="500" value="50" />
+            <button id="toggle-snap" class="tool-btn active" title="Snap to grid">⊟ Snap</button>
+          </div>
+          <div class="tool-group">
+            <label class="tool-label">Pixel pitch (mm):</label>
+            <input id="pixel-pitch" type="number" min="0.1" step="0.1" value="3.9" />
+          </div>
+          <div class="tool-group">
+            <button id="auto-arrange" class="tool-btn">⊞ Tự sắp theo 3D</button>
+            <button id="reset-2d" class="tool-btn btn-ghost">⟲ Reset</button>
+          </div>
+          <div class="tool-group">
+            <label class="tool-label">Mapled mờ:</label>
+            <input id="mapled-opacity" type="range" min="0" max="100" value="60" />
+          </div>
+        </div>
+        <div id="canvas2d-container" class="canvas2d-container">
+          <canvas id="canvas2d"></canvas>
+        </div>
+        <div class="view-hint">
+          <kbd>Drag</kbd> di chuyển · <kbd>Góc</kbd> resize · <kbd>R</kbd> xoay 90° ·
+          <kbd>Del</kbd> bỏ chọn LED · <kbd>Ctrl+lăn</kbd> zoom canvas
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT SIDEBAR: Properties -->
+    <aside class="sidebar sidebar-right">
+      <div class="panel">
+        <div class="panel-header">
+          <span>Thuộc tính</span>
+          <span id="props-name" class="badge">—</span>
+        </div>
+        <div class="panel-body" id="props-body">
+          <div class="empty-state">
+            <div>Chưa chọn LED nào</div>
+            <small>Chọn 1 LED ở 3D hoặc 2D để chỉnh thuộc tính</small>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Tổng quan dự án</div>
+        <div class="panel-body">
+          <div class="stat-grid">
+            <div class="stat">
+              <div class="stat-label">Tổng LED</div>
+              <div class="stat-value" id="stat-total">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Tổng pixel W</div>
+              <div class="stat-value" id="stat-pix-w">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Tổng pixel H</div>
+              <div class="stat-value" id="stat-pix-h">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Diện tích (m²)</div>
+              <div class="stat-value" id="stat-area">0.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">Hướng dẫn nhanh</div>
+        <div class="panel-body small-text">
+          <ol class="howto">
+            <li>Trong SketchUp, <b>Export</b> sang <code>.dae</code> hoặc <code>.gltf</code> rồi import vào đây.</li>
+            <li>Click các mặt LED trong khung 3D, hoặc bấm <b>Tự động phát hiện LED</b> để hệ thống đoán theo tên/material.</li>
+            <li>Chuyển sang tab <b>2D Mapping</b>, tải ảnh <b>Mapled tham chiếu</b> rồi kéo các tấm LED khớp với mapled.</li>
+            <li>Chỉnh kích thước thật, pixel pitch, độ phân giải; sau đó <b>Export</b> file JSON cấu hình.</li>
+          </ol>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-text">Sẵn sàng. Hãy import file 3D hoặc bấm "Demo sân khấu".</span>
+    <span class="spacer"></span>
+    <span id="status-mode">Chế độ: 3D</span>
+    <span id="status-fps">— FPS</span>
+  </footer>
+
+  <div id="toast-host" class="toast-host"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
