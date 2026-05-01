@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96">
+  
+  <g>
+    <path fill="#252a64" d="M28.32,0h41.41c14.5,0,26.27,11.77,26.27,26.27v44.25c0,14.06-11.42,25.48-25.48,25.48H26.27c-14.5,0-26.27-11.77-26.27-26.27V28.32C0,12.69,12.69,0,28.32,0Z"></path>
+    <path fill="#f4f1e4" d="M37.93,30.59h10.23v5.11h-10.23v10.26h-7.67v-25.6h17.9v5.11h-10.23v5.11Z"></path>
+    <path fill="#f4f1e4" d="M65.74,56.28h-10.1v4.08h10.1v11.16l-3.68,4.12h-13.46v-5.76h10.87v-5.07h-10.87v-6.35l5.46-8.42h11.68v6.24Z"></path>
+    <rect fill="#f4f1e4" x="31.8" y="66.66" width="7.45" height="7.44" transform="translate(-39.36 45.73) rotate(-45)"></rect>
+    <rect fill="#f4f1e4" x="50.72" y="40.74" width="15.02" height="5.21"></rect>
+  </g>
+  
+  <text x="116" y="56" font-family="&#39;Halyard Display&#39;, &#39;Barlow&#39;, sans-serif" font-weight="700" font-size="32" fill="#252a64" letter-spacing="-0.5">Felic</text>
+  <text x="116" y="82" font-family="&#39;Halyard Display&#39;, &#39;Barlow&#39;, sans-serif" font-weight="400" font-size="18" fill="#252a64" letter-spacing="2">STUDIO</text>
+</svg>

@@ -42,7 +42,7 @@ function setMode(mode) {
   b2.classList.toggle('active', !isThree);
   b3.setAttribute('aria-selected', String(isThree));
   b2.setAttribute('aria-selected', String(!isThree));
-  $('#status-mode').textContent = `Chế độ: ${isThree ? '3D' : '2D Mapping'}`;
+  $('#status-mode').textContent = `Mode: ${isThree ? '3D' : '2D Mapping'}`;
 
   // Pause video when leaving 2D, optionally resume when returning.
   const vid = editor.getVideo();
@@ -63,15 +63,15 @@ $('#mode-2d').addEventListener('click', () => setMode('2d'));
 // ============ 3D file handling ============
 async function handle3DFile(file) {
   if (!file) return;
-  showLoading(`Đang tải ${file.name}...`);
+  showLoading(`Loading ${file.name}…`);
   try {
     const { root, fileName } = await loadModelFromFile(file);
     afterModelLoaded(root, fileName);
-    toast(`Đã tải ${fileName} thành công`, 'success');
+    toast(`Loaded ${fileName}`, 'success');
   } catch (err) {
     console.error(err);
-    toast(err.message || 'Không tải được file 3D', 'error', 6000);
-    setStatus(`Lỗi: ${err.message}`);
+    toast(err.message || 'Failed to load 3D file', 'error', 6000);
+    setStatus(`Error: ${err.message}`);
   } finally {
     hideLoading();
   }
@@ -82,7 +82,7 @@ function afterModelLoaded(root, fileName) {
   viewer.setModel(root);
   ui.setModel(root);
   undo.clear();
-  setStatus(`Đã tải: ${fileName} · ${countMeshes(root)} object`);
+  setStatus(`Loaded: ${fileName} · ${countMeshes(root)} objects`);
   setMode('3d');
 }
 
@@ -121,30 +121,30 @@ async function loadMapledFile(file) {
     video.crossOrigin = 'anonymous';
     await new Promise((res, rej) => {
       video.addEventListener('loadeddata', res, { once: true });
-      video.addEventListener('error', () => rej(new Error('Không đọc được video')), { once: true });
+      video.addEventListener('error', () => rej(new Error('Could not read video')), { once: true });
     });
     editor.setMapledImage(video);
     setupVideoControls(video);
     setMode('2d');
-    toast(`Đã tải video (${video.videoWidth}×${video.videoHeight}, ${formatTime(video.duration)})`, 'success');
+    toast(`Video loaded (${video.videoWidth}×${video.videoHeight}, ${formatTime(video.duration)})`, 'success');
   } else if (file.type.startsWith('image/')) {
     try {
       const url = await readFileAsDataURL(file);
       const img = new Image();
       await new Promise((res, rej) => {
         img.onload = res;
-        img.onerror = () => rej(new Error('Không đọc được ảnh'));
+        img.onerror = () => rej(new Error('Could not read image'));
         img.src = url;
       });
       editor.setMapledImage(img);
       hideVideoControls();
       setMode('2d');
-      toast(`Đã tải ảnh mapled (${img.naturalWidth}×${img.naturalHeight})`, 'success');
+      toast(`Mapled loaded (${img.naturalWidth}×${img.naturalHeight})`, 'success');
     } catch (err) {
       toast(err.message, 'error');
     }
   } else {
-    toast('Định dạng không hỗ trợ', 'warn');
+    toast('Unsupported file format', 'warn');
   }
 }
 
@@ -192,18 +192,53 @@ function formatTime(sec) {
 // ============ Auto-detect / Clear LEDs ============
 $('#btn-autodetect').addEventListener('click', () => {
   if (!viewer.modelRoot) {
-    toast('Cần import model 3D trước', 'warn');
+    toast('Import a 3D model first', 'warn');
     return;
   }
   undo.pushSnapshot('auto-detect');
-  const added = viewer.autoDetectLEDs(looksLikeLed);
-  if (added.length) toast(`Đã tự động phát hiện ${added.length} LED panel`, 'success');
-  else toast('Không tìm thấy object nào trông giống LED. Hãy click thủ công vào các tấm LED trong khung 3D.', 'info', 5000);
+
+  let total = 0;
+  // Suppress per-mesh undo snapshots throughout the entire detection pass.
+  ledManager._inBatchAdd = true;
+  try {
+    // 1. Walk model hierarchy — add any Group/Object3D named like an LED screen.
+    const LED_RE = /led|screen|display|panel/i;
+    viewer.modelRoot.traverse((node) => {
+      if (!node.isMesh && LED_RE.test(node.name || '')) {
+        node.traverse((o) => {
+          if (o.isMesh && !ledManager.has(o.uuid)) {
+            // _inBatchAdd suppresses undo inside the patched ledManager.add.
+            const r = ledManager.add(o);
+            if (r) total++;
+          }
+        });
+      }
+    });
+
+    // 2. Mesh-level name detection (fallback for ungrouped meshes).
+    const byName = viewer.autoDetectLEDs((m) => {
+      if (ledManager.has(m.uuid)) return false;
+      return looksLikeLed(m);
+    });
+    total += byName.length;
+
+    // 3. Size-based detection — find meshes with same bounding box as marked LEDs.
+    if (ledManager.list().length > 0) {
+      const pred = ledManager.sizePredicate(0.05);
+      const bySize = viewer.autoDetectLEDs((m) => !ledManager.has(m.uuid) && pred(m));
+      total += bySize.length;
+    }
+  } finally {
+    ledManager._inBatchAdd = false;
+  }
+
+  if (total) toast(`Auto-detected ${total} LED panels`, 'success');
+  else toast('No LED objects found by name or size. Click panels manually in the 3D view.', 'info', 5000);
 });
 
 $('#btn-clear-led').addEventListener('click', () => {
   if (!ledManager.list().length) return;
-  if (!confirm('Bỏ đánh dấu tất cả LED?')) return;
+  if (!confirm('Remove all LED marks?')) return;
   undo.pushSnapshot('clear-all-leds');
   for (const led of ledManager.list()) ledManager.remove(led.id);
 });
@@ -236,22 +271,41 @@ viewer.renderer.domElement.addEventListener('pointerdown', () => {
   // Defer to viewer's own logic; we add undo at the toggleByMesh wrapper below.
 });
 
-// Wrap ledManager.toggleByMesh to push undo. The viewer's _handleClick calls
-// either findByMesh+select (no mutation) or add/toggle (mutation).
+// Wrap ledManager mutation methods to push undo snapshots.
 const _origAdd = ledManager.add.bind(ledManager);
 const _origRemove = ledManager.remove.bind(ledManager);
 const _origToggleByMesh = ledManager.toggleByMesh.bind(ledManager);
+const _origAddGroup = ledManager.addGroup.bind(ledManager);
+const _origRemoveGroup = ledManager.removeGroup.bind(ledManager);
+const _origToggleGroup = ledManager.toggleGroup.bind(ledManager);
+
 ledManager.add = function (mesh) {
-  if (!ledManager.has(mesh.uuid) && !undo.isApplying) undo.pushSnapshot('add-led');
+  if (!ledManager.has(mesh.uuid) && !undo.isApplying && !ledManager._inBatchAdd) {
+    undo.pushSnapshot('add-led');
+  }
   return _origAdd(mesh);
 };
 ledManager.remove = function (id) {
-  if (ledManager.leds.has(id) && !undo.isApplying) undo.pushSnapshot('remove-led');
+  if (ledManager.leds.has(id) && !undo.isApplying && !ledManager._inBatchAdd) {
+    undo.pushSnapshot('remove-led');
+  }
   return _origRemove(id);
 };
 ledManager.toggleByMesh = function (mesh) {
   if (!undo.isApplying) undo.pushSnapshot('toggle-led');
   return _origToggleByMesh(mesh);
+};
+ledManager.addGroup = function (group) {
+  if (!undo.isApplying) undo.pushSnapshot('add-led-group');
+  return _origAddGroup(group);
+};
+ledManager.removeGroup = function (group) {
+  if (!undo.isApplying) undo.pushSnapshot('remove-led-group');
+  return _origRemoveGroup(group);
+};
+ledManager.toggleGroup = function (group) {
+  if (!undo.isApplying) undo.pushSnapshot('toggle-led-group');
+  return _origToggleGroup(group);
 };
 
 // ============ 2D toolbar ============
@@ -277,11 +331,11 @@ $('#pixel-pitch').addEventListener('input', (e) => {
 
 $('#mapled-opacity').addEventListener('input', (e) => editor.setMapledOpacity(+e.target.value / 100));
 $('#auto-arrange').addEventListener('click', () => {
-  if (!ledManager.list().length) { toast('Chưa có LED nào để sắp xếp', 'warn'); return; }
+  if (!ledManager.list().length) { toast('No LEDs to arrange', 'warn'); return; }
   undo.pushSnapshot('auto-arrange');
   ledManager.autoArrangeFromWorld(120, 60, 60);
   editor.resetView();
-  toast('Đã chiếu vị trí 2D từ vị trí 3D', 'success');
+  toast('2D positions mirrored from 3D layout', 'success');
 });
 $('#reset-2d').addEventListener('click', () => editor.resetView());
 
@@ -369,7 +423,7 @@ window.addEventListener('keydown', (e) => {
 
 // ============ Loading overlay ============
 function showLoading(msg) {
-  $('#loading-text').textContent = msg || 'Đang tải...';
+  $('#loading-text').textContent = msg || 'Loading…';
   $('#loading-overlay').classList.remove('hidden');
 }
 function hideLoading() {
@@ -382,7 +436,7 @@ editor.resize();
 ui.renderObjectTree();
 ui.renderLedList();
 ui.renderStats();
-setStatus('Sẵn sàng. Hãy import file 3D.');
+setStatus('Ready. Open a 3D model to begin.');
 
 // Start auto-save & offer restore from previous session.
 sections.startAutoSave();

@@ -223,10 +223,23 @@ export class Viewer3D extends EventTarget {
       return;
     }
     const additive = e.shiftKey;
-    // Click toggles "is LED" status when CTRL/Cmd is held; otherwise it adds
-    // the mesh as an LED (if not already) and selects it.
+    const ledGroup = this._findLedGroup(mesh);
+
     if (e.ctrlKey || e.metaKey) {
-      this.ledManager.toggleByMesh(mesh);
+      // Ctrl+click toggles the whole group (or single mesh).
+      if (ledGroup) this.ledManager.toggleGroup(ledGroup);
+      else this.ledManager.toggleByMesh(mesh);
+    } else if (ledGroup) {
+      // Regular click on a mesh inside a LED-named group → add & select whole group.
+      this.ledManager.addGroup(ledGroup);
+      if (!additive) this.ledManager.selection.clear();
+      ledGroup.traverse((o) => {
+        if (o.isMesh) {
+          const led = this.ledManager.findByMesh(o.uuid);
+          if (led) this.ledManager.selection.add(led.id);
+        }
+      });
+      this.ledManager._emit('selection');
     } else {
       const led = this.ledManager.findByMesh(mesh.uuid) || this.ledManager.add(mesh);
       if (led) {
@@ -234,6 +247,20 @@ export class Viewer3D extends EventTarget {
         else this.ledManager.select(led.id, false);
       }
     }
+  }
+
+  // Walk up the ancestor chain from mesh to find the innermost Group whose
+  // name contains a LED/screen keyword.
+  _findLedGroup(mesh) {
+    const LED_RE = /led|screen|display|panel/i;
+    let cur = mesh.parent;
+    while (cur && cur !== this.modelRoot && cur !== this.scene) {
+      if (!cur.isMesh && cur.children.length > 0 && LED_RE.test(cur.name || '')) {
+        return cur;
+      }
+      cur = cur.parent;
+    }
+    return null;
   }
 
   _handleHover(e) {

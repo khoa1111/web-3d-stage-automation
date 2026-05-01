@@ -29,6 +29,8 @@ export class LedManager extends EventTarget {
     /** Layout origin for new LEDs in 2D canvas (px). */
     this._next2dCursor = { x: 60, y: 60, rowHeight: 0 };
     this.pixelPitch = DEFAULT_PIXEL_PITCH;
+    /** Guard used by main.js patches to suppress per-mesh undo inside batch operations. */
+    this._inBatchAdd = false;
   }
 
   setModelRoot(root) {
@@ -147,6 +149,76 @@ export class LedManager extends EventTarget {
       return null;
     }
     return this.add(mesh);
+  }
+
+  // ============ Group (hierarchy) support ============
+  // Adds all descendant meshes inside a Group node as LEDs.
+  addGroup(groupNode) {
+    const added = [];
+    this._inBatchAdd = true;
+    try {
+      groupNode.traverse((o) => {
+        if (o.isMesh && !this.has(o.uuid)) {
+          const r = this.add(o);
+          if (r) added.push(r);
+        }
+      });
+    } finally {
+      this._inBatchAdd = false;
+    }
+    return added;
+  }
+
+  hasGroup(groupNode) {
+    let total = 0, marked = 0;
+    groupNode.traverse((o) => {
+      if (o.isMesh) { total++; if (this.has(o.uuid)) marked++; }
+    });
+    return total > 0 && marked === total;
+  }
+
+  partialGroup(groupNode) {
+    let total = 0, marked = 0;
+    groupNode.traverse((o) => {
+      if (o.isMesh) { total++; if (this.has(o.uuid)) marked++; }
+    });
+    return marked > 0 && marked < total;
+  }
+
+  removeGroup(groupNode) {
+    this._inBatchAdd = true;
+    try {
+      groupNode.traverse((o) => {
+        if (o.isMesh) {
+          const led = this.findByMesh(o.uuid);
+          if (led) this.remove(led.id);
+        }
+      });
+    } finally {
+      this._inBatchAdd = false;
+    }
+  }
+
+  toggleGroup(groupNode) {
+    if (this.hasGroup(groupNode)) this.removeGroup(groupNode);
+    else this.addGroup(groupNode);
+  }
+
+  // Returns a predicate fn(mesh) => bool that matches meshes with the same
+  // bounding box dimensions as already-marked LEDs (within tolFactor %).
+  sizePredicate(tolFactor = 0.05) {
+    const existing = this.list();
+    if (!existing.length) return () => false;
+    const refs = existing.map((l) => [l.world.sx, l.world.sy, l.world.sz]);
+    return (mesh) => {
+      _bbox.setFromObject(mesh);
+      _bbox.getSize(_size);
+      const [mx, my, mz] = [_size.x, _size.y, _size.z];
+      return refs.some(([rx, ry, rz]) => {
+        const ok = (m, r) => r > 0.001 ? Math.abs(m - r) / r < tolFactor : m < 0.001;
+        return ok(mx, rx) && ok(my, ry) && ok(mz, rz);
+      });
+    };
   }
 
   setPixelPitch(pitch) {

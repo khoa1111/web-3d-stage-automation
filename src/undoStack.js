@@ -26,7 +26,7 @@ export class UndoStack {
   undo() {
     if (!this._stack.length) {
       const { toast } = _utils();
-      toast('Không còn thao tác nào để hoàn tác', 'info', 2000);
+      toast('Nothing to undo', 'info', 2000);
       return;
     }
     const snap = this._stack.pop();
@@ -34,7 +34,7 @@ export class UndoStack {
     try {
       this._apply(snap);
       const { toast } = _utils();
-      toast(`Đã hoàn tác: ${snap.label}`, 'info', 1800);
+      toast(`Undid: ${snap.label}`, 'info', 1800);
     } finally {
       this.isApplying = false;
     }

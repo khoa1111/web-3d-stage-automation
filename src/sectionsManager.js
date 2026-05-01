@@ -42,15 +42,15 @@ export class SectionsManager {
   }
 
   save(name) {
-    if (!name?.trim()) { toast('Tên dự án không được trống', 'warn'); return false; }
+    if (!name?.trim()) { toast('Project name cannot be empty', 'warn'); return false; }
     const snap = this._capture(name.trim());
     try {
       localStorage.setItem(PREFIX + encodeURIComponent(name.trim()), JSON.stringify(snap));
-      toast(`Đã lưu dự án "${name.trim()}"`, 'success');
+      toast(`Saved "${name.trim()}"`, 'success');
       return true;
     } catch (e) {
-      if (e.name === 'QuotaExceededError') toast('Hết dung lượng lưu trữ. Hãy xoá bớt dự án cũ.', 'error', 5000);
-      else toast('Không lưu được: ' + e.message, 'error');
+      if (e.name === 'QuotaExceededError') toast('Storage full. Delete older projects.', 'error', 5000);
+      else toast('Could not save: ' + e.message, 'error');
       return false;
     }
   }
@@ -58,28 +58,28 @@ export class SectionsManager {
   load(name) {
     const key = PREFIX + encodeURIComponent(name);
     const raw = localStorage.getItem(key);
-    if (!raw) { toast('Không tìm thấy dự án', 'error'); return; }
+    if (!raw) { toast('Project not found', 'error'); return; }
     try {
       const snap = JSON.parse(raw);
       this.undo.pushSnapshot('before-load');
       this._apply(snap);
       this.undo.clear();
-      toast(`Đã mở dự án "${name}". Hãy nạp lại ảnh/video mapled nếu cần.`, 'success', 5000);
+      toast(`Opened "${name}". Reload the mapled image/video if needed.`, 'success', 5000);
     } catch (e) {
-      toast('Không mở được dự án: ' + e.message, 'error');
+      toast('Could not open project: ' + e.message, 'error');
     }
   }
 
   remove(name) {
     localStorage.removeItem(PREFIX + encodeURIComponent(name));
-    toast(`Đã xoá dự án "${name}"`, 'info');
+    toast(`Deleted "${name}"`, 'info');
   }
 
   rename(oldName, newName) {
-    if (!newName?.trim()) { toast('Tên không được trống', 'warn'); return false; }
+    if (!newName?.trim()) { toast('Name cannot be empty', 'warn'); return false; }
     const oldKey = PREFIX + encodeURIComponent(oldName);
     const newKey = PREFIX + encodeURIComponent(newName.trim());
-    if (localStorage.getItem(newKey)) { toast('Tên đã tồn tại', 'warn'); return false; }
+    if (localStorage.getItem(newKey)) { toast('Name already in use', 'warn'); return false; }
     const raw = localStorage.getItem(oldKey);
     if (!raw) return false;
     try {
@@ -118,23 +118,23 @@ export class SectionsManager {
       if (!snap.leds?.length) return;
       const dlg = this._dlgRestore;
       if (!dlg) return;
-      const date = snap.savedAt ? new Date(snap.savedAt).toLocaleString('vi-VN') : '';
+      const date = snap.savedAt ? new Date(snap.savedAt).toLocaleString() : '';
       dlg.innerHTML = `
         <div class="dlg-shell">
-          <div class="dlg-header"><span>🔄 Khôi phục phiên trước?</span></div>
+          <div class="dlg-header"><span>◆ Restore previous session?</span></div>
           <div class="dlg-body" style="padding:16px 12px">
-            <p>Phiên làm việc trước có <b>${snap.leds.length}</b> LED đã được lưu tự động</p>
+            <p>Your last session had <b>${snap.leds.length}</b> LED panels and was auto-saved.</p>
             <p style="color:var(--muted);font-size:12px">${date}</p>
           </div>
           <div class="dlg-footer">
-            <button id="restore-yes" class="btn btn-primary">Khôi phục</button>
-            <button id="restore-no" class="btn">Bỏ qua</button>
+            <button id="restore-yes" class="btn btn-primary">Restore</button>
+            <button id="restore-no" class="btn">Skip</button>
           </div>
         </div>`;
       dlg.showModal();
       dlg.querySelector('#restore-yes').addEventListener('click', () => {
         this._apply(snap);
-        toast('Đã khôi phục phiên trước. Hãy nạp lại ảnh/video mapled nếu cần.', 'success', 5000);
+        toast('Session restored. Reload the mapled image/video if needed.', 'success', 5000);
         dlg.close();
       });
       dlg.querySelector('#restore-no').addEventListener('click', () => dlg.close());
@@ -146,13 +146,13 @@ export class SectionsManager {
   openSaveDialog() {
     const existing = this.list();
     const suggestName = this._suggestName(existing);
-    const name = window.prompt('Tên dự án:', suggestName);
+    const name = window.prompt('Project name:', suggestName);
     if (name === null) return;
     const trimmed = name.trim();
-    if (!trimmed) { toast('Tên không được trống', 'warn'); return; }
+    if (!trimmed) { toast('Name cannot be empty', 'warn'); return; }
     const existingProject = existing.find(p => p.name === trimmed);
     if (existingProject) {
-      if (!window.confirm(`Dự án "${trimmed}" đã tồn tại. Ghi đè?`)) return;
+      if (!window.confirm(`"${trimmed}" already exists. Overwrite?`)) return;
     }
     this.save(trimmed);
   }
@@ -171,26 +171,26 @@ export class SectionsManager {
       <li class="proj-row" data-name="${_escAttr(p.name)}">
         <div>
           <div class="proj-name">${_escHtml(p.name)}</div>
-          <div class="proj-meta">${p.ledCount} LED · ${p.savedAt ? new Date(p.savedAt).toLocaleString('vi-VN') : ''}</div>
+          <div class="proj-meta">${p.ledCount} LEDs · ${p.savedAt ? new Date(p.savedAt).toLocaleString() : ''}</div>
         </div>
-        <button class="btn btn-sm proj-open">Mở</button>
+        <button class="btn btn-sm proj-open">Open</button>
         <button class="btn btn-sm proj-rename">✎</button>
-        <button class="btn btn-sm btn-ghost proj-del">🗑</button>
+        <button class="btn btn-sm btn-ghost proj-del">✕</button>
       </li>`).join('');
 
     dlg.innerHTML = `
       <div class="dlg-shell">
         <div class="dlg-header">
-          <span>📁 Dự án đã lưu</span>
+          <span>◆ Saved Projects</span>
           <button class="dlg-close btn btn-sm btn-ghost">✕</button>
         </div>
         <div class="dlg-body">
           <ul id="proj-list" class="proj-list">${rows || ''}</ul>
-          ${!rows ? '<div class="empty-state"><div>Chưa có dự án nào</div><small>Bấm "Lưu mới" để lưu phiên hiện tại</small></div>' : ''}
+          ${!rows ? '<div class="empty-state"><div>No saved projects</div><small>Use Save (Ctrl+S) to save the current session</small></div>' : ''}
         </div>
         <div class="dlg-footer">
-          <button id="proj-new" class="btn btn-primary">💾 Lưu mới</button>
-          <button id="proj-cancel" class="btn">Đóng</button>
+          <button id="proj-new" class="btn btn-primary">Save current</button>
+          <button id="proj-cancel" class="btn">Close</button>
         </div>
       </div>`;
 
@@ -212,7 +212,7 @@ export class SectionsManager {
       btn.addEventListener('click', () => {
         const li = btn.closest('[data-name]');
         const oldName = li.dataset.name;
-        const newName = window.prompt('Tên mới:', oldName);
+        const newName = window.prompt('New name:', oldName);
         if (newName && this.rename(oldName, newName.trim())) {
           this._renderOpenDialog();
         }
@@ -221,7 +221,7 @@ export class SectionsManager {
     dlg.querySelectorAll('.proj-del').forEach(btn => {
       btn.addEventListener('click', () => {
         const name = btn.closest('[data-name]').dataset.name;
-        if (!window.confirm(`Xoá dự án "${name}"?`)) return;
+        if (!window.confirm(`Delete "${name}"?`)) return;
         this.remove(name);
         this._renderOpenDialog();
       });
@@ -266,8 +266,8 @@ export class SectionsManager {
 
   _suggestName(existing) {
     let n = existing.length + 1;
-    let name = `Dự án ${n}`;
-    while (existing.find(p => p.name === name)) name = `Dự án ${++n}`;
+    let name = `Project ${n}`;
+    while (existing.find(p => p.name === name)) name = `Project ${++n}`;
     return name;
   }
 }
