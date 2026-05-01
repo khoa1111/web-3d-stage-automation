@@ -1,4 +1,5 @@
 // UI bindings: object tree, LED list, properties panel, stats.
+// Checkboxes on each row + Shift-click for range multi-select.
 
 import { $, $$, fmt, ledColor } from './utils.js';
 
@@ -8,8 +9,10 @@ export class UI {
     this.viewer = viewer3d;
     this.editor = editor2d;
 
-    this._objectIndex = []; // [{node, name, isMesh}]
+    this._objectIndex = []; // [{node, name}]
     this._search = '';
+    this._lastObjIdx = -1;  // for shift-range
+    this._lastLedIdx = -1;
 
     ledManager.on('change', () => {
       this.renderObjectTree();
@@ -25,6 +28,7 @@ export class UI {
 
     $('#search-obj').addEventListener('input', (e) => {
       this._search = e.target.value.toLowerCase();
+      this._lastObjIdx = -1; // reset shift-range when filter changes
       this.renderObjectTree();
     });
   }
@@ -36,6 +40,7 @@ export class UI {
         if (o.isMesh) this._objectIndex.push({ node: o, name: o.name || '(unnamed)' });
       });
     }
+    this._lastObjIdx = -1;
     this.renderObjectTree();
     this.renderLedList();
     this.renderStats();
@@ -47,36 +52,79 @@ export class UI {
     const empty = $('#empty-tree');
     const count = $('#obj-count');
     list.innerHTML = '';
+
     const filtered = this._objectIndex.filter((o) =>
       !this._search || o.name.toLowerCase().includes(this._search)
     );
     count.textContent = filtered.length;
     empty.classList.toggle('hidden', this._objectIndex.length > 0);
 
-    for (const item of filtered) {
+    filtered.forEach((item, idx) => {
       const led = this.ledManager.findByMesh(item.node.uuid);
+      const isSelected = led && this.ledManager.isSelected(led.id);
+
       const li = document.createElement('li');
-      li.className = 'tree-item' + (led ? ' is-led' : '') + (led && this.ledManager.isSelected(led.id) ? ' selected' : '');
-      li.innerHTML = `
+      li.className = 'tree-item' + (led ? ' is-led' : '') + (isSelected ? ' selected' : '');
+
+      // Checkbox (disabled for non-LED rows; acts as "mark as LED then select" on LED rows)
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'row-check';
+      chk.checked = !!isSelected;
+      if (!led) chk.disabled = true;
+      li.appendChild(chk);
+
+      li.insertAdjacentHTML('beforeend', `
         ${led ? '<span class="led-marker"></span>' : '<span class="obj-icon">▢</span>'}
         <span class="obj-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
         <button class="toggle-led" title="${led ? 'Bỏ đánh dấu LED' : 'Đánh dấu là LED'}">${led ? '★ LED' : '+ LED'}</button>
-      `;
+      `);
+
+      // Checkbox click — shift-range support
+      chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!led) return;
+        if (e.shiftKey && this._lastObjIdx >= 0) {
+          this._rangeSelectObj(filtered, this._lastObjIdx, idx);
+        } else if (e.ctrlKey || e.metaKey) {
+          this.ledManager.toggleSelection(led.id);
+        } else {
+          this.ledManager.select(led.id, false);
+        }
+        this._lastObjIdx = idx;
+      });
+
+      // Row click (non-checkbox area)
       li.addEventListener('click', (e) => {
-        if (e.target.classList.contains('toggle-led')) return;
+        if (e.target === chk || e.target.classList.contains('toggle-led')) return;
         if (led) {
-          this.ledManager.select(led.id, e.shiftKey);
+          if (e.shiftKey && this._lastObjIdx >= 0) {
+            this._rangeSelectObj(filtered, this._lastObjIdx, idx);
+          } else {
+            this.ledManager.select(led.id, e.ctrlKey || e.metaKey);
+          }
+          this._lastObjIdx = idx;
           this.viewer.focusOnLed(led);
         } else {
-          // Hovering a non-LED in the tree just frames the camera on it.
           this.viewer.fitToObject(item.node, 2.4);
         }
       });
+
       li.querySelector('.toggle-led').addEventListener('click', (e) => {
         e.stopPropagation();
         this.ledManager.toggleByMesh(item.node);
       });
+
       list.appendChild(li);
+    });
+  }
+
+  _rangeSelectObj(filtered, fromIdx, toIdx) {
+    const [a, b] = [Math.min(fromIdx, toIdx), Math.max(fromIdx, toIdx)];
+    for (let i = a; i <= b; i++) {
+      const item = filtered[i];
+      const led = this.ledManager.findByMesh(item.node.uuid);
+      if (led) this.ledManager.select(led.id, true);
     }
   }
 
@@ -86,32 +134,66 @@ export class UI {
     const empty = $('#empty-led');
     const count = $('#led-count');
     list.innerHTML = '';
+
     const leds = this.ledManager.list();
     count.textContent = leds.length;
     empty.classList.toggle('hidden', leds.length > 0);
 
-    for (const led of leds) {
+    leds.forEach((led, idx) => {
+      const isSelected = this.ledManager.isSelected(led.id);
       const li = document.createElement('li');
-      li.className = 'led-item' + (this.ledManager.isSelected(led.id) ? ' selected' : '');
-      li.innerHTML = `
+      li.className = 'led-item' + (isSelected ? ' selected' : '');
+
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'row-check';
+      chk.checked = isSelected;
+      li.appendChild(chk);
+
+      li.insertAdjacentHTML('beforeend', `
         <span class="led-color" style="background:${led.color}"></span>
         <div style="flex:1;min-width:0">
           <div class="led-name" title="${escapeHtml(led.name)}">${escapeHtml(led.name)}</div>
           <div class="led-info">${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px</div>
         </div>
         <button title="Bỏ đánh dấu LED">✕</button>
-      `;
+      `);
+
+      chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.shiftKey && this._lastLedIdx >= 0) {
+          this._rangeSelectLed(leds, this._lastLedIdx, idx);
+        } else if (e.ctrlKey || e.metaKey) {
+          this.ledManager.toggleSelection(led.id);
+        } else {
+          this.ledManager.select(led.id, false);
+        }
+        this._lastLedIdx = idx;
+      });
+
       li.addEventListener('click', (e) => {
-        if (e.target.tagName === 'BUTTON') return;
-        this.ledManager.select(led.id, e.shiftKey);
+        if (e.target === chk || e.target.tagName === 'BUTTON') return;
+        if (e.shiftKey && this._lastLedIdx >= 0) {
+          this._rangeSelectLed(leds, this._lastLedIdx, idx);
+        } else {
+          this.ledManager.select(led.id, e.ctrlKey || e.metaKey);
+        }
+        this._lastLedIdx = idx;
         this.viewer.focusOnLed(led);
       });
+
       li.querySelector('button').addEventListener('click', (e) => {
         e.stopPropagation();
         this.ledManager.remove(led.id);
       });
+
       list.appendChild(li);
-    }
+    });
+  }
+
+  _rangeSelectLed(leds, fromIdx, toIdx) {
+    const [a, b] = [Math.min(fromIdx, toIdx), Math.max(fromIdx, toIdx)];
+    for (let i = a; i <= b; i++) this.ledManager.select(leds[i].id, true);
   }
 
   // ============ Properties panel ============
@@ -143,7 +225,6 @@ export class UI {
           <label>Màu</label><input id="p-color" type="color" class="prop-color" value="${hslToHexString(led.color)}" />
         </div>
       </div>
-
       <div class="prop-group">
         <div class="prop-group-title">Kích thước thật</div>
         <div class="prop-row">
@@ -153,7 +234,6 @@ export class UI {
           <label>Cao (mm)</label><input id="p-realh" type="number" min="1" value="${led.realH}" />
         </div>
       </div>
-
       <div class="prop-group">
         <div class="prop-group-title">Điểm ảnh</div>
         <div class="prop-row">
@@ -166,7 +246,6 @@ export class UI {
           <label>Pixel H</label><input id="p-pixh" type="number" min="1" value="${led.pixelH}" />
         </div>
       </div>
-
       <div class="prop-group">
         <div class="prop-group-title">Vị trí 2D (px)</div>
         <div class="prop-row">
@@ -185,7 +264,6 @@ export class UI {
           <label>Xoay (°)</label><input id="p-rot" type="number" step="1" value="${fmt((led.map2d.rotation || 0) * 180 / Math.PI, 1)}" />
         </div>
       </div>
-
       <div class="prop-group">
         <div class="prop-group-title">Vị trí 3D (m)</div>
         <div class="prop-row"><label>Center X</label><input type="number" disabled value="${fmt(led.world.cx, 2)}" /></div>
@@ -194,9 +272,6 @@ export class UI {
       </div>
     `;
 
-    const onText = (id, key) => $(id).addEventListener('input', (e) => {
-      this.ledManager.update(led.id, { [key]: e.target.value });
-    });
     const onNum = (id, key, mapped = (v) => v) => $(id).addEventListener('input', (e) => {
       const v = parseFloat(e.target.value);
       if (isNaN(v)) return;
@@ -241,7 +316,6 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 function hslToHexString(hsl) {
-  // hsl(h, s%, l%) → #rrggbb
   const m = /hsl\((\d+),\s*(\d+)%?,\s*(\d+)%?\)/.exec(hsl);
   if (!m) return '#ff3366';
   const h = +m[1] / 360, s = +m[2] / 100, l = +m[3] / 100;

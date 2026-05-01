@@ -9,7 +9,6 @@
 //   * .obj          – widely supported
 //   * .fbx          – via FBXLoader
 
-import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
@@ -70,70 +69,4 @@ async function loadFBX(file) {
   // FBXLoader.parse takes ArrayBuffer + path for resolving textures.
   const root = loader.parse(buffer, '');
   return { root, fileName: file.name };
-}
-
-// Build a synthetic stage with a few placeholder LED panels so the user can
-// experiment with the tool before having a real SketchUp model on hand.
-export function buildDemoStage() {
-  const root = new THREE.Group();
-  root.name = 'DemoStage';
-
-  // Floor (stage platform).
-  const floor = new THREE.Mesh(
-    new THREE.BoxGeometry(20, 0.4, 12),
-    new THREE.MeshStandardMaterial({ color: 0x222831, roughness: 0.85 })
-  );
-  floor.name = 'Stage_Floor';
-  floor.position.y = 0.2;
-  root.add(floor);
-
-  // Truss-like back beam.
-  const beam = new THREE.Mesh(
-    new THREE.BoxGeometry(20, 0.3, 0.3),
-    new THREE.MeshStandardMaterial({ color: 0x3b3f47, metalness: 0.6, roughness: 0.4 })
-  );
-  beam.name = 'Truss_Back';
-  beam.position.set(0, 7.5, -5.5);
-  root.add(beam);
-
-  // Helper to make an LED panel with a name hint.
-  function ledPanel(name, w, h, x, y, z, ry = 0) {
-    const geom = new THREE.BoxGeometry(w, h, 0.15);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x111111, emissive: 0x080808, roughness: 0.5
-    });
-    mat.name = `LED_Material_${name}`;
-    const mesh = new THREE.Mesh(geom, mat);
-    mesh.name = name;
-    mesh.position.set(x, y, z);
-    mesh.rotation.y = ry;
-    return mesh;
-  }
-
-  // Main back wall - one big LED.
-  root.add(ledPanel('LED_Main_Back', 12, 6, 0, 4, -5));
-
-  // Two side wings at angles.
-  root.add(ledPanel('LED_Side_Left', 4, 5, -7.5, 3.5, -3.5, Math.PI / 6));
-  root.add(ledPanel('LED_Side_Right', 4, 5, 7.5, 3.5, -3.5, -Math.PI / 6));
-
-  // Bottom front strips.
-  root.add(ledPanel('LED_Front_Strip_1', 4, 1.2, -4, 1.2, 5.5));
-  root.add(ledPanel('LED_Front_Strip_2', 4, 1.2, 4, 1.2, 5.5));
-
-  // Top header.
-  root.add(ledPanel('LED_Header_Top', 14, 1.5, 0, 7.5, -4.9));
-
-  // A couple of decorative non-LED objects.
-  for (let i = 0; i < 4; i++) {
-    const speaker = new THREE.Mesh(
-      new THREE.BoxGeometry(0.6, 1.2, 0.6),
-      new THREE.MeshStandardMaterial({ color: 0x1f2937 })
-    );
-    speaker.name = `Speaker_${i + 1}`;
-    speaker.position.set(-9 + i * 6, 1, 5);
-    root.add(speaker);
-  }
-
-  return { root, fileName: 'demo-stage.gltf' };
 }

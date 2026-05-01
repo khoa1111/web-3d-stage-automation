@@ -57,7 +57,7 @@ code {
 /* ============ Top Bar ============ */
 .topbar {
   height: var(--topbar-h);
-  background: linear-gradient(180deg, #0e1730, #0b1220);
+  background: linear-gradient(180deg, #102246 0%, #081d69 70%, #0b1220 100%);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
@@ -67,12 +67,11 @@ code {
 }
 
 .brand { display: flex; align-items: center; gap: 12px; }
-.logo {
-  width: 36px; height: 36px; border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), #6366f1);
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 18px; color: white;
-  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.4);
+.logo-img {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  display: block;
+  box-shadow: 0 2px 12px rgba(8, 29, 105, 0.55);
 }
 .brand-title { font-weight: 700; font-size: 15px; }
 .brand-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
@@ -431,6 +430,77 @@ code {
   to { opacity: 1; transform: translateX(0); }
 }
 .toast.fade-out { opacity: 0; transform: translateX(20px); transition: all 0.25s; }
+
+/* ============ Checkboxes in tree / LED list ============ */
+.row-check {
+  width: 13px; height: 13px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.row-check:disabled { opacity: 0.3; cursor: default; }
+
+/* ============ Canvas cursor variants ============ */
+.canvas2d-container.tool-pan { cursor: grab; }
+.canvas2d-container.tool-pan.panning { cursor: grabbing; }
+.canvas2d-container.marquee-active { cursor: crosshair; }
+
+/* ============ Project / Save Dialogs ============ */
+dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0;
+  min-width: 420px;
+  max-width: 600px;
+  box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
+
+.dlg-shell { display: flex; flex-direction: column; }
+.dlg-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(180deg, #15213a, #111a2e);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 14px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.dlg-body {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.dlg-body::-webkit-scrollbar { width: 6px; }
+.dlg-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.dlg-footer {
+  padding: 10px 16px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+  display: flex; gap: 8px; justify-content: flex-end;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.proj-list { list-style: none; margin: 0; padding: 0; }
+.proj-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 4px;
+}
+.proj-row:last-child { border-bottom: none; }
+.proj-row:hover { background: var(--panel-2); }
+.proj-name { font-size: 13px; font-weight: 600; }
+.proj-meta { font-size: 11px; color: var(--muted); }
+
+/* ============ Video controls ============ */
+#video-controls { flex-wrap: nowrap; }
+#vid-seek { width: 120px; }
+#vid-time { white-space: nowrap; }
 
 /* ============ Responsive ============ */
 @media (max-width: 1100px) {

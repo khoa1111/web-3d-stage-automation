@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Stage LED Mapping Tool – 3D → 2D Mapping</title>
   <link rel="stylesheet" href="./styles/main.css" />
-  <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230ea5e9'/><text x='50%' y='55%' text-anchor='middle' fill='white' font-family='Arial' font-weight='bold' font-size='16' dominant-baseline='middle'>L</text></svg>" />
+  <link rel="icon" type="image/svg+xml" href="./assets/FS_wth_favicon.svg?v=2" />
 
   <script type="importmap">
     {
@@ -20,7 +20,7 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <div class="logo">L</div>
+      <img class="logo-img" src="./assets/FS_wth_favicon.svg" alt="FS" width="36" height="36" />
       <div>
         <div class="brand-title">Stage LED Mapping Tool</div>
         <div class="brand-sub">3D phối cảnh sân khấu → mapping LED 2D</div>
@@ -32,27 +32,21 @@
         <input id="file-3d" type="file" accept=".gltf,.glb,.obj,.dae,.fbx" hidden />
         <span class="btn-icon">📂</span> Mở file 3D
       </label>
-      <label class="btn" title="Tải mapled tham chiếu (ảnh)">
-        <input id="file-mapled" type="file" accept="image/*" hidden />
-        <span class="btn-icon">🖼️</span> Mapled tham chiếu
+      <label class="btn" title="Tải mapled tham chiếu (ảnh hoặc video)">
+        <input id="file-mapled" type="file" accept="image/*,video/*" hidden />
+        <span class="btn-icon">🖼️</span> Mapled / Video
       </label>
-      <button id="btn-demo" class="btn" title="Tạo sân khấu demo có sẵn">
-        <span class="btn-icon">✨</span> Demo sân khấu
-      </button>
       <div class="divider"></div>
       <div class="mode-switch" role="tablist" aria-label="Chế độ làm việc">
         <button id="mode-3d" class="mode-btn active" role="tab" aria-selected="true">3D Viewer</button>
         <button id="mode-2d" class="mode-btn" role="tab" aria-selected="false">2D Mapping</button>
       </div>
       <div class="divider"></div>
-      <button id="btn-export" class="btn btn-success" title="Xuất cấu hình mapping JSON">
-        <span class="btn-icon">⬇️</span> Export
+      <button id="btn-save-project" class="btn btn-success" title="Lưu dự án (Ctrl+S)">
+        <span class="btn-icon">💾</span> Lưu dự án
       </button>
-      <button id="btn-import-config" class="btn" title="Nhập cấu hình JSON">
-        <label style="cursor:pointer">
-          <input id="file-config" type="file" accept=".json" hidden />
-          <span class="btn-icon">⬆️</span> Import config
-        </label>
+      <button id="btn-open-project" class="btn" title="Mở dự án (Ctrl+O)">
+        <span class="btn-icon">📁</span> Mở dự án
       </button>
     </div>
   </header>
@@ -76,7 +70,7 @@
           <ul id="object-tree" class="object-tree"></ul>
           <div id="empty-tree" class="empty-state">
             <div>Chưa có model nào</div>
-            <small>Import file 3D từ SketchUp (xuất .dae / .obj / .gltf / .fbx) hoặc bấm "Demo sân khấu"</small>
+            <small>Import file 3D từ SketchUp (xuất .dae / .obj / .gltf / .fbx)</small>
           </div>
         </div>
       </div>
@@ -110,6 +104,8 @@
           <button id="cam-fit" class="tool-btn" title="Fit khung hình (Space)">⤢ Fit</button>
           <button id="toggle-grid" class="tool-btn active" title="Bật/tắt lưới">▦ Grid</button>
           <button id="toggle-wire" class="tool-btn" title="Wireframe">▢ Wire</button>
+          <span class="tool-sep"></span>
+          <button id="btn-undo" class="tool-btn" title="Hoàn tác (Ctrl+Z)">↩ Undo</button>
         </div>
         <div class="view-hint">
           <kbd>Click</kbd> chọn LED · <kbd>Shift+Click</kbd> chọn nhiều ·
@@ -123,6 +119,10 @@
 
       <div id="view-2d" class="view">
         <div class="canvas2d-toolbar">
+          <div class="tool-group">
+            <button id="tool-select" class="tool-btn active" title="Công cụ chọn / Marquee (V)">▭ Select</button>
+            <button id="tool-pan" class="tool-btn" title="Pan (H)">✋ Pan</button>
+          </div>
           <div class="tool-group">
             <label class="tool-label">Tỷ lệ:</label>
             <select id="scale-select">
@@ -144,18 +144,26 @@
           <div class="tool-group">
             <button id="auto-arrange" class="tool-btn">⊞ Tự sắp theo 3D</button>
             <button id="reset-2d" class="tool-btn btn-ghost">⟲ Reset</button>
+            <button id="btn-undo-2d" class="tool-btn" title="Hoàn tác (Ctrl+Z)">↩ Undo</button>
           </div>
-          <div class="tool-group">
+          <div class="tool-group" id="preview-group">
             <label class="tool-label">Mapled mờ:</label>
             <input id="mapled-opacity" type="range" min="0" max="100" value="60" />
+            <button id="toggle-preview" class="tool-btn" title="Chế độ xem trước LED">▶ Preview</button>
+            <button id="toggle-mask" class="tool-btn" title="Tô tối khu vực ngoài LED">◐ Mask</button>
+          </div>
+          <div class="tool-group hidden" id="video-controls">
+            <button id="vid-play" class="tool-btn">▶</button>
+            <input id="vid-seek" type="range" min="0" max="1000" value="0" style="width:120px" />
+            <span id="vid-time" class="tool-label">00:00 / 00:00</span>
           </div>
         </div>
         <div id="canvas2d-container" class="canvas2d-container">
           <canvas id="canvas2d"></canvas>
         </div>
         <div class="view-hint">
-          <kbd>Drag</kbd> di chuyển · <kbd>Góc</kbd> resize · <kbd>R</kbd> xoay 90° ·
-          <kbd>Del</kbd> bỏ chọn LED · <kbd>Ctrl+lăn</kbd> zoom canvas
+          <kbd>Drag</kbd> marquee chọn · <kbd>Shift+Drag</kbd> thêm vào chọn · <kbd>H</kbd> pan ·
+          <kbd>R</kbd> xoay 90° · <kbd>Del</kbd> bỏ LED · <kbd>Ctrl+Scroll</kbd> zoom
         </div>
       </div>
     </section>
@@ -204,9 +212,9 @@
         <div class="panel-body small-text">
           <ol class="howto">
             <li>Trong SketchUp, <b>Export</b> sang <code>.dae</code> hoặc <code>.gltf</code> rồi import vào đây.</li>
-            <li>Click các mặt LED trong khung 3D, hoặc bấm <b>Tự động phát hiện LED</b> để hệ thống đoán theo tên/material.</li>
-            <li>Chuyển sang tab <b>2D Mapping</b>, tải ảnh <b>Mapled tham chiếu</b> rồi kéo các tấm LED khớp với mapled.</li>
-            <li>Chỉnh kích thước thật, pixel pitch, độ phân giải; sau đó <b>Export</b> file JSON cấu hình.</li>
+            <li>Click các mặt LED trong khung 3D, hoặc bấm <b>Tự động phát hiện LED</b>. Dùng <b>checkbox + Shift</b> để chọn nhiều trong cây đối tượng.</li>
+            <li>Chuyển sang tab <b>2D Mapping</b>, tải ảnh/video <b>Mapled</b> rồi kéo/marquee các tấm LED khớp với mapled.</li>
+            <li>Bấm <b>▶ Preview</b> để xem video chiếu lên LED. Dùng <b>💾 Lưu dự án</b> để lưu lại làm tiếp sau.</li>
           </ol>
         </div>
       </div>
@@ -214,13 +222,17 @@
   </main>
 
   <footer class="statusbar">
-    <span id="status-text">Sẵn sàng. Hãy import file 3D hoặc bấm "Demo sân khấu".</span>
+    <span id="status-text">Sẵn sàng. Hãy import file 3D.</span>
     <span class="spacer"></span>
     <span id="status-mode">Chế độ: 3D</span>
     <span id="status-fps">— FPS</span>
   </footer>
 
   <div id="toast-host" class="toast-host"></div>
+
+  <!-- Project dialogs -->
+  <dialog id="dlg-projects"></dialog>
+  <dialog id="dlg-restore"></dialog>
 
   <script type="module" src="./src/main.js"></script>
 </body>

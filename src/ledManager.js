@@ -248,6 +248,94 @@ export class LedManager extends EventTarget {
     return slot;
   }
 
+  // ============ Undo / Snapshot support ============
+
+  // Serialize current state to a plain JSON-safe object (used by UndoStack and SectionsManager).
+  serialize() {
+    return {
+      v: 1,
+      pixelPitch: this.pixelPitch,
+      selection: [...this.selection],
+      leds: this.list().map((l) => ({
+        id: l.id,
+        meshUuid: l.meshUuid,
+        name: l.name,
+        color: l.color,
+        realW: l.realW, realH: l.realH,
+        pixelW: l.pixelW, pixelH: l.pixelH,
+        pixelPitch: l.pixelPitch,
+        world: { ...l.world },
+        map2d: { ...l.map2d },
+        hidden: l.hidden,
+      })),
+    };
+  }
+
+  // Restore from a snapshot produced by serialize(). Much quieter than
+  // clear()+importConfig(): emits change and selection exactly once each.
+  restore(snap, modelRoot) {
+    if (!snap?.leds) return;
+
+    // Un-tint any currently-tinted meshes.
+    for (const led of this.leds.values()) led.restoreOriginalMaterial?.();
+    this.leds.clear();
+    this.selection.clear();
+
+    // Build mesh lookup maps.
+    const byUuid = new Map();
+    const byName = new Map();
+    if (modelRoot) {
+      modelRoot.traverse((o) => {
+        if (o.isMesh) {
+          byUuid.set(o.uuid, o);
+          if (o.name && !byName.has(o.name)) byName.set(o.name, o);
+        }
+      });
+    }
+
+    this.pixelPitch = snap.pixelPitch ?? this.pixelPitch;
+
+    for (const item of snap.leds) {
+      const mesh = byUuid.get(item.meshUuid) || byName.get(item.name);
+      if (mesh) {
+        // Re-tint mesh, keeping the same material color from the snapshot.
+        const origMat = mesh.material;
+        const ledMat = new (origMat.constructor)({
+          color: hslToHex(item.color),
+          emissive: hslToHex(item.color),
+          emissiveIntensity: 0.55,
+          transparent: true,
+          opacity: 0.92,
+        });
+        ledMat.name = `LED_Mark_${item.id}`;
+        mesh.material = ledMat;
+        const rec = {
+          ...item,
+          _origMaterial: origMat,
+          _mesh: mesh,
+          restoreOriginalMaterial: () => { if (origMat) mesh.material = origMat; },
+        };
+        this.leds.set(item.id, rec);
+      } else {
+        // Orphan (no mesh in scene) — store for 2D-only rendering.
+        this.leds.set(item.id, {
+          ...item,
+          _mesh: null,
+          restoreOriginalMaterial: () => {},
+        });
+      }
+    }
+
+    if (snap.selection) {
+      for (const id of snap.selection) {
+        if (this.leds.has(id)) this.selection.add(id);
+      }
+    }
+
+    this._emit('change');
+    this._emit('selection');
+  }
+
   // ============ Persistence ============
   exportConfig(extra = {}) {
     return {
