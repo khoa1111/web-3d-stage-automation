@@ -12,17 +12,18 @@ Dự án là một trang web tĩnh, chạy hoàn toàn trên trình duyệt — 
   `.gltf` / `.glb` (khuyến nghị), `.dae` (Collada – mặc định của SketchUp), `.obj`, `.fbx`.
   > File `.skp` gốc của SketchUp dùng định dạng đóng nên phải Export sang một trong các định dạng trên trong SketchUp trước khi import.
 - **3D Viewer** với điều khiển quỹ đạo (xoay, pan, zoom), preset camera (Front / Top / Left / Right / Iso), bật/tắt lưới và wireframe.
-- **Click-to-select**: click thẳng vào tấm LED trong khung 3D để đánh dấu thành "LED panel" — vật liệu mesh được tô màu nổi bật để dễ nhận biết.
-- **Tự động phát hiện LED** dựa trên tên object / material (`LED`, `panel`, `screen`, `display`, `man hinh`, …).
-- **Cây đối tượng** (object tree) ở sidebar trái với search.
-- **2D Mapping editor** trên canvas: drag, resize 8 hướng, xoay, snap-to-grid, zoom (Ctrl + lăn chuột), pan (giữ chuột giữa).
-- **Mapled tham chiếu**: nạp ảnh sơ đồ LED của nhà cung cấp làm background mờ, sau đó kéo các tấm LED khớp lên trên.
-- **Tự động chiếu vị trí 2D từ 3D**: lấy toạ độ centre của mỗi tấm LED trong không gian 3D và xếp sang canvas 2D.
-- **Tính toán pixel** theo pixel pitch (mm) và kích thước thật (mm) → ra số pixel ngang/dọc và tổng thông số dự án (tổng pixel, diện tích m²…).
-- **Properties panel** đầy đủ: tên, màu, kích thước thật, pixel pitch, độ phân giải, vị trí 2D & 3D.
-- **Export / Import cấu hình JSON** để lưu và tái sử dụng phiên làm việc.
-- **Drag & drop**: thả file 3D / ảnh mapled / file JSON vào trang là tự động xử lý.
-- **Phím tắt**: `1` 3D · `2` 2D · `F/T/L/R/I` camera · `Space` fit · `R` xoay 90° trong 2D · `Del` bỏ chọn LED · `Esc` clear selection.
+- **Click-to-select**: click thẳng vào tấm LED trong khung 3D để đánh dấu thành "LED panel".
+- **Tự động phát hiện LED** dựa trên tên object / material.
+- **Cây đối tượng** với **checkbox + Shift** để chọn nhiều cùng lúc (như Finder/Explorer).
+- **2D Mapping editor** trên canvas: drag, resize 8 hướng, xoay, snap-to-grid.
+- **Marquee selection**: kéo chuột trên vùng trống để chọn nhiều LED bằng khung chữ nhật.
+- **Mapled hỗ trợ ảnh và video**: chế độ **Preview** chiếu video lên các tấm LED, có **Mask** để tô tối khu vực ngoài LED.
+- **Undo Ctrl+Z / Cmd+Z** (lưu 5 bước gần nhất).
+- **Lưu / Mở dự án trong trình duyệt** (localStorage), tự động lưu phiên hiện tại để mở lại sau.
+- **Tự động chiếu vị trí 2D từ 3D**.
+- **Tính toán pixel** theo pixel pitch (mm) và kích thước thật (mm).
+- **Drag & drop**: thả file 3D / ảnh / video vào trang là tự động xử lý.
+- **Phím tắt**: `Ctrl+Z` undo · `Ctrl+S` lưu · `Ctrl+O` mở · `1` 3D · `2` 2D · `V` select · `H` pan · `F/T/L/R/I` camera · `Space` fit · `R` xoay 90° · `Del` bỏ chọn LED · `Esc` clear selection.
 
 ---
 
@@ -52,16 +53,16 @@ Mở trình duyệt vào <http://localhost:8080>.
 1. **Xuất file từ SketchUp** sang `.dae` hoặc `.gltf`:
    File → Export → 3D Model → chọn định dạng `.dae` (Collada) hoặc cài plugin GLTF.
 2. **Import vào website**: bấm **📂 Mở file 3D** (hoặc kéo thả file vào trang).
-   Nếu chưa có file thật, bấm **✨ Demo sân khấu** để tạo nhanh một sân khấu mẫu có sẵn 6 tấm LED.
 3. **Chọn các tấm LED**:
    - Click trực tiếp vào tấm LED trong khung 3D, hoặc
-   - Bấm **🔎 Tự động phát hiện LED** ở sidebar trái nếu các object có tên/material chứa từ khoá LED.
-4. **Tải mapled tham chiếu** (ảnh sơ đồ LED): bấm **🖼️ Mapled tham chiếu**. Ảnh sẽ hiện mờ phía sau canvas 2D.
+   - Bấm **🔎 Tự động phát hiện LED** ở sidebar trái, hoặc
+   - Dùng **checkbox + Shift** trong cây đối tượng để chọn nhiều cùng lúc.
+4. **Tải mapled tham chiếu** (ảnh hoặc video): bấm **🖼️ Mapled / Video**.
 5. **Chuyển sang tab "2D Mapping"** và:
    - Bấm **⊞ Tự sắp theo 3D** để có layout khởi tạo từ vị trí 3D.
-   - Drag / resize / xoay từng tấm LED khớp với mapled.
-   - Chỉnh **pixel pitch** (mm), **kích thước thật**, độ phân giải trong panel Thuộc tính bên phải.
-6. **Xuất cấu hình**: bấm **⬇️ Export** để tải file JSON. File này chứa toàn bộ vị trí 2D, kích thước, pixel resolution của từng tấm — có thể nạp lại sau bằng **⬆️ Import config**.
+   - Drag / resize / xoay từng tấm, hoặc kéo marquee để chọn nhiều LED cùng lúc.
+   - Bấm **▶ Preview** để xem video chiếu lên các LED, **◐ Mask** để tô tối khu vực ngoài.
+6. **Lưu dự án**: bấm **💾 Lưu dự án** (Ctrl+S) để lưu vào trình duyệt. Mở lại bằng **📁 Mở dự án** (Ctrl+O). Phiên hiện tại được tự động lưu, nếu đóng tab thì lần sau mở sẽ có lựa chọn khôi phục.
 
 ---
 
@@ -70,33 +71,41 @@ Mở trình duyệt vào <http://localhost:8080>.
 ```
 .
 ├── index.html              # Markup chính + import map cho three.js
+├── assets/
+│   └── FS_wth_favicon.svg  # Logo công ty / favicon
 ├── styles/
 │   └── main.css            # Toàn bộ style (dark UI)
 ├── src/
 │   ├── main.js             # Bootstrap + wiring
-│   ├── fileLoader.js       # Loader cho gltf/obj/dae/fbx + demo stage
+│   ├── fileLoader.js       # Loader cho gltf/obj/dae/fbx
 │   ├── viewer3d.js         # Three.js scene, picking, camera presets
-│   ├── editor2d.js         # Canvas 2D editor (drag/resize/rotate/snap)
-│   ├── ledManager.js       # State LED + export/import + auto-arrange
-│   ├── ui.js               # Object tree, LED list, properties, stats
+│   ├── editor2d.js         # Canvas 2D editor (drag/resize/rotate/marquee/preview)
+│   ├── ledManager.js       # State LED + serialize/restore + auto-arrange
+│   ├── ui.js               # Object tree (checkbox), LED list, properties, stats
+│   ├── undoStack.js        # Undo Ctrl+Z (5 bước)
+│   ├── sectionsManager.js  # Lưu / mở dự án localStorage + auto-save
 │   └── utils.js            # Helpers chung (toast, file I/O, màu…)
 └── README.md
 ```
 
 ---
 
-## 5. Định dạng file Export
+## 5. Định dạng dự án (lưu trong localStorage)
+
+Mỗi dự án lưu dưới khoá `fs.stage.project.<encodedName>`. Phiên hiện tại tự động lưu vào `fs.stage.autosave.current` mỗi khi có thay đổi (debounced 500ms).
 
 ```jsonc
 {
-  "version": 1,
-  "generatedAt": "2026-04-30T10:11:12.000Z",
+  "v": 1,
+  "name": "Sân khấu Gala 2026",
+  "savedAt": "2026-05-01T10:11:12.000Z",
+  "ledCount": 6,
   "pixelPitch": 3.9,
-  "model": "DemoStage",
-  "totals": { "count": 6, "pixelWidthSum": 12288, "pixelHeightMax": 1536, "areaM2": 102.5 },
+  "selection": ["led_xxxxx"],
   "leds": [
     {
       "id": "led_xxxxx",
+      "meshUuid": "abc-123",
       "name": "LED_Main_Back",
       "color": "hsl(210, 75%, 55%)",
       "realW": 12000, "realH": 6000,
@@ -105,9 +114,12 @@ Mở trình duyệt vào <http://localhost:8080>.
       "world": { "cx": 0, "cy": 4, "cz": -5, "rx": 0, "ry": 0, "rz": 0, "sx": 12, "sy": 6, "sz": 0.15 },
       "map2d": { "x": 60, "y": 60, "w": 1200, "h": 600, "rotation": 0 }
     }
-  ]
+  ],
+  "view": { "scale": 1, "tx": 0, "ty": 0, "mapledPos": {"x":60,"y":60,"scale":1}, "opacity": 0.6 }
 }
 ```
+
+> Ảnh / video mapled **không** được lưu trong dự án (để tiết kiệm dung lượng). Khi mở lại dự án, hãy nạp lại file mapled nếu cần.
 
 ---
 

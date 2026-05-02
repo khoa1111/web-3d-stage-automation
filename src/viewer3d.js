@@ -2,12 +2,15 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MapledOverlay3D } from './mapledOverlay3d.js';
 
 export class Viewer3D extends EventTarget {
   constructor(container, ledManager) {
     super();
     this.container = container;
     this.ledManager = ledManager;
+    /** @type {MapledOverlay3D|null} */
+    this.mapledOverlay = null;
 
     // Scene & camera.
     this.scene = new THREE.Scene();
@@ -56,6 +59,13 @@ export class Viewer3D extends EventTarget {
     // React to selection changes coming from elsewhere (e.g., the LED list).
     ledManager.on('selection', () => this._refreshSelectionVisuals());
     ledManager.on('change', () => this._refreshSelectionVisuals());
+  }
+
+  // Bootstrap the 3D mapled overlay. Called once main.js has constructed
+  // both Editor2D and Viewer3D so the overlay can subscribe to editor events.
+  attachEditor(editor) {
+    if (this.mapledOverlay) this.mapledOverlay.dispose();
+    this.mapledOverlay = new MapledOverlay3D(this.scene, this.ledManager, editor);
   }
 
   _setupLights() {
@@ -223,10 +233,23 @@ export class Viewer3D extends EventTarget {
       return;
     }
     const additive = e.shiftKey;
-    // Click toggles "is LED" status when CTRL/Cmd is held; otherwise it adds
-    // the mesh as an LED (if not already) and selects it.
+    const ledGroup = this._findLedGroup(mesh);
+
     if (e.ctrlKey || e.metaKey) {
-      this.ledManager.toggleByMesh(mesh);
+      // Ctrl+click toggles the whole group (or single mesh).
+      if (ledGroup) this.ledManager.toggleGroup(ledGroup);
+      else this.ledManager.toggleByMesh(mesh);
+    } else if (ledGroup) {
+      // Regular click on a mesh inside a LED-named group → add & select whole group.
+      this.ledManager.addGroup(ledGroup);
+      if (!additive) this.ledManager.selection.clear();
+      ledGroup.traverse((o) => {
+        if (o.isMesh) {
+          const led = this.ledManager.findByMesh(o.uuid);
+          if (led) this.ledManager.selection.add(led.id);
+        }
+      });
+      this.ledManager._emit('selection');
     } else {
       const led = this.ledManager.findByMesh(mesh.uuid) || this.ledManager.add(mesh);
       if (led) {
@@ -234,6 +257,20 @@ export class Viewer3D extends EventTarget {
         else this.ledManager.select(led.id, false);
       }
     }
+  }
+
+  // Walk up the ancestor chain from mesh to find the innermost Group whose
+  // name contains a LED/screen keyword.
+  _findLedGroup(mesh) {
+    const LED_RE = /led|screen|display|panel/i;
+    let cur = mesh.parent;
+    while (cur && cur !== this.modelRoot && cur !== this.scene) {
+      if (!cur.isMesh && cur.children.length > 0 && LED_RE.test(cur.name || '')) {
+        return cur;
+      }
+      cur = cur.parent;
+    }
+    return null;
   }
 
   _handleHover(e) {

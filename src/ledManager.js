@@ -29,6 +29,8 @@ export class LedManager extends EventTarget {
     /** Layout origin for new LEDs in 2D canvas (px). */
     this._next2dCursor = { x: 60, y: 60, rowHeight: 0 };
     this.pixelPitch = DEFAULT_PIXEL_PITCH;
+    /** Guard used by main.js patches to suppress per-mesh undo inside batch operations. */
+    this._inBatchAdd = false;
   }
 
   setModelRoot(root) {
@@ -107,6 +109,9 @@ export class LedManager extends EventTarget {
       map2d: this._allocate2dSlot(realW, realH),
       // Visual flags.
       hidden: false,
+      // Multi-LED-wall workflow.
+      group: '',
+      locked: false,
     });
 
     // Tint the original mesh so the user sees what's been marked.
@@ -147,6 +152,76 @@ export class LedManager extends EventTarget {
       return null;
     }
     return this.add(mesh);
+  }
+
+  // ============ Group (hierarchy) support ============
+  // Adds all descendant meshes inside a Group node as LEDs.
+  addGroup(groupNode) {
+    const added = [];
+    this._inBatchAdd = true;
+    try {
+      groupNode.traverse((o) => {
+        if (o.isMesh && !this.has(o.uuid)) {
+          const r = this.add(o);
+          if (r) added.push(r);
+        }
+      });
+    } finally {
+      this._inBatchAdd = false;
+    }
+    return added;
+  }
+
+  hasGroup(groupNode) {
+    let total = 0, marked = 0;
+    groupNode.traverse((o) => {
+      if (o.isMesh) { total++; if (this.has(o.uuid)) marked++; }
+    });
+    return total > 0 && marked === total;
+  }
+
+  partialGroup(groupNode) {
+    let total = 0, marked = 0;
+    groupNode.traverse((o) => {
+      if (o.isMesh) { total++; if (this.has(o.uuid)) marked++; }
+    });
+    return marked > 0 && marked < total;
+  }
+
+  removeGroup(groupNode) {
+    this._inBatchAdd = true;
+    try {
+      groupNode.traverse((o) => {
+        if (o.isMesh) {
+          const led = this.findByMesh(o.uuid);
+          if (led) this.remove(led.id);
+        }
+      });
+    } finally {
+      this._inBatchAdd = false;
+    }
+  }
+
+  toggleGroup(groupNode) {
+    if (this.hasGroup(groupNode)) this.removeGroup(groupNode);
+    else this.addGroup(groupNode);
+  }
+
+  // Returns a predicate fn(mesh) => bool that matches meshes with the same
+  // bounding box dimensions as already-marked LEDs (within tolFactor %).
+  sizePredicate(tolFactor = 0.05) {
+    const existing = this.list();
+    if (!existing.length) return () => false;
+    const refs = existing.map((l) => [l.world.sx, l.world.sy, l.world.sz]);
+    return (mesh) => {
+      _bbox.setFromObject(mesh);
+      _bbox.getSize(_size);
+      const [mx, my, mz] = [_size.x, _size.y, _size.z];
+      return refs.some(([rx, ry, rz]) => {
+        const ok = (m, r) => r > 0.001 ? Math.abs(m - r) / r < tolFactor : m < 0.001;
+        return ok(mx, rx) && ok(my, ry) && ok(mz, rz);
+      });
+    };
   }
 
   setPixelPitch(pitch) {
@@ -203,6 +278,79 @@ export class LedManager extends EventTarget {
     this._emit('change');
   }
 
+  // ============ Groups & locking (multi-LED-wall workflow) ============
+  // Assigns currently-selected LEDs to `name`. If `name` is omitted, picks
+  // the next free auto-name (e.g. "LED 1", "LED 2"…).
+  groupSelected(name) {
+    const ids = [...this.selection];
+    if (!ids.length) return null;
+    const finalName = (name && name.trim()) || this._nextGroupName();
+    for (const id of ids) {
+      const led = this.leds.get(id);
+      if (led) led.group = finalName;
+    }
+    this._emit('change');
+    return { name: finalName, count: ids.length };
+  }
+
+  _nextGroupName() {
+    const used = new Set(this.list().map(l => l.group).filter(Boolean));
+    let n = 1;
+    while (used.has(`LED ${n}`)) n++;
+    return `LED ${n}`;
+  }
+
+  renameGroup(oldName, newName) {
+    if (!newName || oldName === newName) return false;
+    let touched = 0;
+    for (const led of this.leds.values()) {
+      if (led.group === oldName) { led.group = newName; touched++; }
+    }
+    if (touched) this._emit('change');
+    return touched > 0;
+  }
+
+  // Returns a sorted list of distinct group names. The first slot is
+  // reserved for the empty group ('') if any LEDs are still ungrouped.
+  listGroups() {
+    const set = new Set();
+    let hasUngrouped = false;
+    for (const led of this.leds.values()) {
+      if (led.group) set.add(led.group);
+      else hasUngrouped = true;
+    }
+    const arr = [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return hasUngrouped ? ['', ...arr] : arr;
+  }
+
+  setLocked(id, on) {
+    const led = this.leds.get(id);
+    if (!led) return;
+    led.locked = !!on;
+    if (led.locked) this.selection.delete(id);
+    this._emit('change');
+    this._emit('selection');
+  }
+
+  setLockedAll(on) {
+    let any = false;
+    for (const led of this.leds.values()) {
+      const next = !!on;
+      if (led.locked !== next) { led.locked = next; any = true; }
+    }
+    if (any) {
+      if (on) this.selection.clear();
+      this._emit('change');
+      this._emit('selection');
+    }
+  }
+
+  allLocked() {
+    if (!this.leds.size) return false;
+    for (const led of this.leds.values()) if (!led.locked) return false;
+    return true;
+  }
+
   // ============ Auto-arrange ============
   // Project the world centre of each LED onto the XY plane and use that as a
   // starting layout. Useful when the user wants the 2D arrangement to roughly
@@ -248,6 +396,98 @@ export class LedManager extends EventTarget {
     return slot;
   }
 
+  // ============ Undo / Snapshot support ============
+
+  // Serialize current state to a plain JSON-safe object (used by UndoStack and SectionsManager).
+  serialize() {
+    return {
+      v: 1,
+      pixelPitch: this.pixelPitch,
+      selection: [...this.selection],
+      leds: this.list().map((l) => ({
+        id: l.id,
+        meshUuid: l.meshUuid,
+        name: l.name,
+        color: l.color,
+        realW: l.realW, realH: l.realH,
+        pixelW: l.pixelW, pixelH: l.pixelH,
+        pixelPitch: l.pixelPitch,
+        world: { ...l.world },
+        map2d: { ...l.map2d },
+        hidden: l.hidden,
+        group: l.group || '',
+        locked: !!l.locked,
+      })),
+    };
+  }
+
+  // Restore from a snapshot produced by serialize(). Much quieter than
+  // clear()+importConfig(): emits change and selection exactly once each.
+  restore(snap, modelRoot) {
+    if (!snap?.leds) return;
+
+    // Un-tint any currently-tinted meshes.
+    for (const led of this.leds.values()) led.restoreOriginalMaterial?.();
+    this.leds.clear();
+    this.selection.clear();
+
+    // Build mesh lookup maps.
+    const byUuid = new Map();
+    const byName = new Map();
+    if (modelRoot) {
+      modelRoot.traverse((o) => {
+        if (o.isMesh) {
+          byUuid.set(o.uuid, o);
+          if (o.name && !byName.has(o.name)) byName.set(o.name, o);
+        }
+      });
+    }
+
+    this.pixelPitch = snap.pixelPitch ?? this.pixelPitch;
+
+    for (const rawItem of snap.leds) {
+      // Default new fields when restoring an older snapshot.
+      const item = { group: '', locked: false, ...rawItem };
+      const mesh = byUuid.get(item.meshUuid) || byName.get(item.name);
+      if (mesh) {
+        // Re-tint mesh, keeping the same material color from the snapshot.
+        const origMat = mesh.material;
+        const ledMat = new (origMat.constructor)({
+          color: hslToHex(item.color),
+          emissive: hslToHex(item.color),
+          emissiveIntensity: 0.55,
+          transparent: true,
+          opacity: 0.92,
+        });
+        ledMat.name = `LED_Mark_${item.id}`;
+        mesh.material = ledMat;
+        const rec = {
+          ...item,
+          _origMaterial: origMat,
+          _mesh: mesh,
+          restoreOriginalMaterial: () => { if (origMat) mesh.material = origMat; },
+        };
+        this.leds.set(item.id, rec);
+      } else {
+        // Orphan (no mesh in scene) — store for 2D-only rendering.
+        this.leds.set(item.id, {
+          ...item,
+          _mesh: null,
+          restoreOriginalMaterial: () => {},
+        });
+      }
+    }
+
+    if (snap.selection) {
+      for (const id of snap.selection) {
+        if (this.leds.has(id)) this.selection.add(id);
+      }
+    }
+
+    this._emit('change');
+    this._emit('selection');
+  }
+
   // ============ Persistence ============
   exportConfig(extra = {}) {
     return {
@@ -267,6 +507,8 @@ export class LedManager extends EventTarget {
         pixelPitch: l.pixelPitch,
         world: l.world,
         map2d: l.map2d,
+        group: l.group || '',
+        locked: !!l.locked,
       })),
     };
   }
@@ -295,6 +537,8 @@ export class LedManager extends EventTarget {
             realW: item.realW, realH: item.realH,
             pixelW: item.pixelW, pixelH: item.pixelH,
             pixelPitch: item.pixelPitch,
+            group: item.group || '',
+            locked: !!item.locked,
           });
           this.updateMap2d(rec.id, item.map2d || {});
           this.rename(rec.id, item.name);
@@ -313,6 +557,8 @@ export class LedManager extends EventTarget {
           world: item.world || { cx: 0, cy: 0, cz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0 },
           map2d: item.map2d || { x: 50, y: 50, w: 200, h: 100, rotation: 0 },
           hidden: false,
+          group: item.group || '',
+          locked: !!item.locked,
           restoreOriginalMaterial: () => {},
         });
       }
@@ -354,4 +600,6 @@ export class LedManager extends EventTarget {
  * @property {{cx:number,cy:number,cz:number,rx:number,ry:number,rz:number,sx:number,sy:number,sz:number}} world
  * @property {{x:number,y:number,w:number,h:number,rotation:number}} map2d
  * @property {boolean} hidden
+ * @property {string} group
+ * @property {boolean} locked
  */
