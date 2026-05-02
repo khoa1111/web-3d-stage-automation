@@ -18,7 +18,7 @@ export class Viewer3D extends EventTarget {
     this.scene.fog = new THREE.Fog(0x0a0f1d, 60, 200);
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
-    this.camera.position.set(15, 12, 22);
+    this.camera.position.set(22, 18, 22);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -32,7 +32,7 @@ export class Viewer3D extends EventTarget {
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 1;
     this.controls.maxDistance = 500;
-    this.controls.target.set(0, 3, 0);
+    this.controls.target.set(0, 0, 0);
 
     this._setupLights();
     this._setupHelpers();

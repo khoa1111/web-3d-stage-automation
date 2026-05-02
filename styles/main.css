@@ -391,6 +391,28 @@ code {
 .led-group-children { padding-left: 12px; border-left: 2px solid var(--border); margin: 4px 0 4px 8px; }
 .led-group-children.collapsed { display: none; }
 
+/* Per-group toggle buttons in the LED list header. */
+.led-group-header .grp-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.led-group-header .grp-btn:hover {
+  background: var(--sel-soft);
+  color: var(--sel);
+  border-color: var(--border-md);
+}
+.led-group-header .grp-lock.is-locked { color: var(--warn); }
+.led-group-header .grp-overlay.is-hidden { color: var(--accent); }
+.led-group-header .grp-ungroup:hover { color: var(--danger); }
+
 .object-tree, .led-list {
   list-style: none; margin: 0; padding: 0;
 }
@@ -679,6 +701,37 @@ code {
   letter-spacing: 0.04em;
 }
 .statusbar .spacer { flex: 1; }
+
+/* Compact language toggle in the status bar */
+.status-lang {
+  display: inline-flex;
+  align-items: stretch;
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px;
+  cursor: pointer;
+  font-family: var(--font-condensed);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 0.10em;
+  margin-left: 4px;
+  color: var(--muted);
+  user-select: none;
+  height: 18px;
+  line-height: 1;
+}
+.status-lang:hover { border-color: var(--border-md); }
+.status-lang-opt {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 8px;
+  border-radius: 8px;
+  transition: background 120ms, color 120ms;
+}
+.status-lang-opt.is-active {
+  background: var(--accent);
+  color: var(--fs-cream);
+}
 
 /* ============ Loading overlay ============ */
 .loading-overlay {
