@@ -12,6 +12,10 @@ export class UI {
     /** @type {Array<{node, name:string, depth:number, isGroup:boolean}>} */
     this._objectIndex = [];
     this._search = '';
+    /** Last LED clicked in the LED list — anchor for Shift+click range selection. */
+    this._lastClickedLedId = null;
+    /** Group names whose children are collapsed in the LED list. */
+    this._collapsedGroups = new Set();
 
     ledManager.on('change', () => {
       this.renderObjectTree();
@@ -157,54 +161,131 @@ export class UI {
     const groupBtn = $('#btn-group-selected');
     if (groupBtn) groupBtn.disabled = this.ledManager.selection.size === 0;
 
-    leds.forEach((led) => {
-      const isSelected = this.ledManager.isSelected(led.id);
-      const li = document.createElement('li');
-      li.className = 'led-item'
-        + (isSelected ? ' selected' : '')
-        + (led.locked ? ' locked' : '');
+    // Bucket LEDs by group; preserve insertion order within each bucket.
+    /** @type {Map<string, Array>} */
+    const buckets = new Map();
+    for (const led of leds) {
+      const key = led.group || '';
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key).push(led);
+    }
 
-      const groupBadge = led.group
-        ? `<span class="led-group-badge">${escHtml(led.group)}</span>`
-        : '';
+    // Render order: real groups (sorted), then "Ungrouped" at the end.
+    const groupNames = [...buckets.keys()]
+      .filter(g => g !== '')
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (buckets.has('')) groupNames.push('');
 
-      li.innerHTML = `
-        <span class="led-color" style="background:${led.color}"></span>
-        <div style="flex:1;min-width:0">
-          <div class="led-name" title="${escHtml(led.name)}">${escHtml(led.name)} ${groupBadge}</div>
-          <div class="led-info">${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px</div>
-        </div>
-        <button class="led-lock ${led.locked ? 'is-locked' : ''}" title="${escAttr(t('led.lock.title'))}" aria-label="${escAttr(t('led.lock.title'))}">
-          ${_lockIcon(led.locked)}
-        </button>
-        <button class="led-remove" title="${escAttr(t('led.remove.title'))}">✕</button>
+    // Flat list of visible LED ids in render order — used for Shift+click range selection.
+    const visibleOrder = [];
+
+    for (const groupName of groupNames) {
+      const groupLeds = buckets.get(groupName);
+      const collapsed = this._collapsedGroups.has(groupName);
+
+      const header = document.createElement('li');
+      header.className = 'led-group-header' + (collapsed ? ' collapsed' : '');
+      header.innerHTML = `
+        <span class="led-group-caret">▾</span>
+        <span class="led-group-name">${escHtml(groupName || t('toolbar.activeGroup.ungrouped'))}</span>
+        <span class="led-group-count">${groupLeds.length}</span>
       `;
-
-      li.addEventListener('click', (e) => {
-        if (e.target.closest('.led-remove') || e.target.closest('.led-lock')) return;
-        if (led.locked) return; // locked LEDs cannot be selected from the list either
-        if (e.ctrlKey || e.metaKey) this.ledManager.toggleSelection(led.id);
-        else this.ledManager.select(led.id, false);
-        this.viewer.focusOnLed(led);
+      header.addEventListener('click', (e) => {
+        // Shift/Ctrl+click selects every LED in the group; plain click toggles collapse.
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+          if (e.shiftKey && !(e.ctrlKey || e.metaKey)) this.ledManager.selection.clear();
+          for (const led of groupLeds) {
+            if (!led.locked) this.ledManager.selection.add(led.id);
+          }
+          this.ledManager._emit('selection');
+          return;
+        }
+        if (this._collapsedGroups.has(groupName)) this._collapsedGroups.delete(groupName);
+        else this._collapsedGroups.add(groupName);
+        this.renderLedList();
       });
+      list.appendChild(header);
 
-      li.querySelector('.led-lock').addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Snapshot for undo.
-        window.__app?.undo?.pushSnapshot('lock-toggle');
-        this.ledManager.setLocked(led.id, !led.locked);
-        const { toast } = window.__app?.utils || {};
-        if (toast) toast(led.locked ? t('toast.unlocked') : t('toast.locked'), 'info', 1500);
-      });
+      if (collapsed) continue;
 
-      li.querySelector('.led-remove').addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (led.locked) return;
-        this.ledManager.remove(led.id);
-      });
+      const childWrap = document.createElement('li');
+      childWrap.className = 'led-group-children';
+      const childUl = document.createElement('ul');
+      childUl.style.cssText = 'list-style:none;margin:0;padding:0;';
+      childWrap.appendChild(childUl);
 
-      list.appendChild(li);
+      for (const led of groupLeds) {
+        visibleOrder.push(led.id);
+        const li = this._buildLedItem(led, visibleOrder);
+        childUl.appendChild(li);
+      }
+      list.appendChild(childWrap);
+    }
+  }
+
+  // Build a single LED row. `visibleOrder` is the running list of LED ids in
+  // render order (used to compute Shift+click ranges).
+  _buildLedItem(led, visibleOrder) {
+    const isSelected = this.ledManager.isSelected(led.id);
+    const li = document.createElement('li');
+    li.className = 'led-item'
+      + (isSelected ? ' selected' : '')
+      + (led.locked ? ' locked' : '');
+
+    li.innerHTML = `
+      <span class="led-color" style="background:${led.color}"></span>
+      <div style="flex:1;min-width:0">
+        <div class="led-name" title="${escHtml(led.name)}">${escHtml(led.name)}</div>
+        <div class="led-info">${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px</div>
+      </div>
+      <button class="led-lock ${led.locked ? 'is-locked' : ''}" title="${escAttr(t('led.lock.title'))}" aria-label="${escAttr(t('led.lock.title'))}">
+        ${_lockIcon(led.locked)}
+      </button>
+      <button class="led-remove" title="${escAttr(t('led.remove.title'))}">✕</button>
+    `;
+
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('.led-remove') || e.target.closest('.led-lock')) return;
+      if (led.locked) return;
+
+      if (e.shiftKey && this._lastClickedLedId) {
+        // Range-select between the last-clicked LED and this one.
+        const a = visibleOrder.indexOf(this._lastClickedLedId);
+        const b = visibleOrder.indexOf(led.id);
+        if (a >= 0 && b >= 0) {
+          const [lo, hi] = a < b ? [a, b] : [b, a];
+          if (!(e.ctrlKey || e.metaKey)) this.ledManager.selection.clear();
+          for (let i = lo; i <= hi; i++) {
+            const id = visibleOrder[i];
+            const l = this.ledManager.get(id);
+            if (l && !l.locked) this.ledManager.selection.add(id);
+          }
+          this.ledManager._emit('selection');
+          return;
+        }
+      }
+
+      if (e.ctrlKey || e.metaKey) this.ledManager.toggleSelection(led.id);
+      else this.ledManager.select(led.id, false);
+      this._lastClickedLedId = led.id;
+      this.viewer.focusOnLed(led);
     });
+
+    li.querySelector('.led-lock').addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.__app?.undo?.pushSnapshot('lock-toggle');
+      this.ledManager.setLocked(led.id, !led.locked);
+      const { toast } = window.__app?.utils || {};
+      if (toast) toast(led.locked ? t('toast.unlocked') : t('toast.locked'), 'info', 1500);
+    });
+
+    li.querySelector('.led-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (led.locked) return;
+      this.ledManager.remove(led.id);
+    });
+
+    return li;
   }
 
   // ============ Properties panel ============

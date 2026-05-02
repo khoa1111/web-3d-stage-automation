@@ -335,8 +335,61 @@ code {
 
 .led-actions-row {
   display: flex; gap: 6px; margin-bottom: 8px;
+  align-items: stretch;
 }
-.led-actions-row .btn { flex: 1; justify-content: center; }
+/* "Group selected" takes the bulk; "Freeze all" is roughly 1/3 of its width. */
+.led-actions-row .led-actions-primary { flex: 3 1 0; justify-content: center; }
+.led-actions-row .led-actions-freeze {
+  flex: 1 1 0;
+  justify-content: center;
+  padding: 5px 6px;
+  font-size: 10.5px;
+  gap: 4px;
+  min-width: 0;
+}
+.led-actions-row .led-actions-freeze span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============ Hierarchical LED list ============ */
+.led-group-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  background: rgba(129, 172, 255, 0.07);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  user-select: none;
+  font-family: var(--font-condensed);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--fs-cream);
+}
+.led-group-header:first-child { margin-top: 0; }
+.led-group-header:hover { background: rgba(129, 172, 255, 0.13); }
+.led-group-header .led-group-caret {
+  display: inline-block;
+  width: 10px; text-align: center;
+  transition: transform 0.15s ease;
+  color: var(--muted);
+}
+.led-group-header.collapsed .led-group-caret { transform: rotate(-90deg); }
+.led-group-header .led-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.led-group-header .led-group-count {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.led-group-children { padding-left: 12px; border-left: 2px solid var(--border); margin: 4px 0 4px 8px; }
+.led-group-children.collapsed { display: none; }
 
 .object-tree, .led-list {
   list-style: none; margin: 0; padding: 0;
