@@ -74,8 +74,8 @@ export class UndoStack {
       this.editor.viewScale = snap.view.scale;
       this.editor.viewTx = snap.view.tx;
       this.editor.viewTy = snap.view.ty;
-      Object.assign(this.editor.mapled, snap.view.mapledPos || {});
-      this.editor.mapledOpacity = snap.view.opacity;
+      if (snap.view.mapledPos) this.editor.mapled = snap.view.mapledPos;
+      if (snap.view.opacity != null) this.editor.mapledOpacity = snap.view.opacity;
     }
     this.editor.render();
   }
@@ -95,6 +95,8 @@ export function _serializeLed(led) {
     world: { ...led.world },
     map2d: { ...led.map2d },
     hidden: led.hidden,
+    group: led.group || '',
+    locked: !!led.locked,
   };
 }
 

@@ -2,12 +2,15 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MapledOverlay3D } from './mapledOverlay3d.js';
 
 export class Viewer3D extends EventTarget {
   constructor(container, ledManager) {
     super();
     this.container = container;
     this.ledManager = ledManager;
+    /** @type {MapledOverlay3D|null} */
+    this.mapledOverlay = null;
 
     // Scene & camera.
     this.scene = new THREE.Scene();
@@ -56,6 +59,13 @@ export class Viewer3D extends EventTarget {
     // React to selection changes coming from elsewhere (e.g., the LED list).
     ledManager.on('selection', () => this._refreshSelectionVisuals());
     ledManager.on('change', () => this._refreshSelectionVisuals());
+  }
+
+  // Bootstrap the 3D mapled overlay. Called once main.js has constructed
+  // both Editor2D and Viewer3D so the overlay can subscribe to editor events.
+  attachEditor(editor) {
+    if (this.mapledOverlay) this.mapledOverlay.dispose();
+    this.mapledOverlay = new MapledOverlay3D(this.scene, this.ledManager, editor);
   }
 
   _setupLights() {

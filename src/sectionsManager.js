@@ -258,7 +258,7 @@ export class SectionsManager {
       this.editor.viewScale = snap.view.scale ?? 1;
       this.editor.viewTx = snap.view.tx ?? 0;
       this.editor.viewTy = snap.view.ty ?? 0;
-      if (snap.view.mapledPos) Object.assign(this.editor.mapled, snap.view.mapledPos);
+      if (snap.view.mapledPos) this.editor.mapled = snap.view.mapledPos;
       if (snap.view.opacity != null) this.editor.mapledOpacity = snap.view.opacity;
     }
     this.editor.render();

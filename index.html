@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="./assets/FS_wth_favicon.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles/main.css" />
 
   <script type="importmap">
@@ -25,35 +25,55 @@
     <div class="brand">
       <img class="logo-img" src="./assets/FS_wth_favicon.svg" alt="FS" width="36" height="36" />
       <div>
-        <div class="brand-title">Stage LED Mapping</div>
-        <div class="brand-sub">◆ Felic Studio · 3D → 2D</div>
+        <div class="brand-title" data-i18n="app.title">Stage LED Mapping</div>
+        <div class="brand-sub" data-i18n="app.subtitle">◆ Felic Studio · 3D → 2D</div>
       </div>
     </div>
 
     <div class="topbar-actions">
-      <label class="btn btn-primary" title="Import 3D model (.gltf, .glb, .obj, .dae, .fbx)">
+      <label class="btn btn-primary" data-i18n-title="topbar.openModel.title">
         <input id="file-3d" type="file" accept=".gltf,.glb,.obj,.dae,.fbx" hidden />
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Open 3D Model
+        <span data-i18n="topbar.openModel">Open 3D Model</span>
       </label>
-      <label class="btn btn-navy" title="Load mapled reference (image or video)">
+      <label class="btn btn-navy" data-i18n-title="topbar.mapled.title">
         <input id="file-mapled" type="file" accept="image/*,video/*" hidden />
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        Mapled / Video
+        <span data-i18n="topbar.mapled">Mapled / Video</span>
       </label>
+
+      <!-- Global video controls (visible in both 2D & 3D modes once a video is loaded) -->
+      <div id="video-controls" class="topbar-video hidden">
+        <button id="vid-play" class="btn btn-navy btn-sm" title="Play / Pause" aria-label="Play / Pause">▶</button>
+        <input id="vid-seek" type="range" min="0" max="1000" value="0" />
+        <span id="vid-time" class="t-mono">00:00 / 00:00</span>
+      </div>
+
       <div class="divider"></div>
       <div class="mode-switch" role="tablist" aria-label="Working mode">
-        <button id="mode-3d" class="mode-btn active" role="tab" aria-selected="true">3D View</button>
-        <button id="mode-2d" class="mode-btn" role="tab" aria-selected="false">2D Mapping</button>
+        <button id="mode-3d" class="mode-btn active" role="tab" aria-selected="true" data-i18n="topbar.mode3d">3D View</button>
+        <button id="mode-2d" class="mode-btn" role="tab" aria-selected="false" data-i18n="topbar.mode2d">2D Mapping</button>
       </div>
       <div class="divider"></div>
-      <button id="btn-save-project" class="btn btn-success" title="Save project (Ctrl+S)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        Save
+
+      <button id="btn-freeze-all" class="btn btn-navy btn-icon-text" data-i18n-title="topbar.freezeAll.title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span id="btn-freeze-all-label" data-i18n="topbar.freezeAll">Freeze all</span>
       </button>
-      <button id="btn-open-project" class="btn btn-navy" title="Open project (Ctrl+O)">
+
+      <button id="btn-save-project" class="btn btn-success" data-i18n-title="topbar.save.title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <span data-i18n="topbar.save">Save</span>
+      </button>
+      <button id="btn-open-project" class="btn btn-navy" data-i18n-title="topbar.open.title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        Projects
+        <span data-i18n="topbar.open">Projects</span>
+      </button>
+
+      <div class="divider"></div>
+      <button id="btn-lang" class="btn btn-ghost btn-lang" data-i18n-title="topbar.lang.title">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span id="btn-lang-label">VI</span>
       </button>
     </div>
   </header>
@@ -63,35 +83,38 @@
     <aside class="sidebar sidebar-left">
       <div class="panel" style="flex:1.4">
         <div class="panel-header">
-          <span>◆ Object Hierarchy</span>
+          <span data-i18n="panel.objects">◆ Object Hierarchy</span>
           <span id="obj-count" class="badge">0</span>
         </div>
         <div class="panel-body">
           <div class="search-row">
-            <input id="search-obj" type="search" placeholder="Search by name…" />
+            <input id="search-obj" type="search" data-i18n-attr="placeholder:search.objects" placeholder="Search by name…" />
           </div>
           <div class="auto-detect-row">
-            <button id="btn-autodetect" class="btn btn-sm btn-primary">Auto-detect LEDs</button>
-            <button id="btn-clear-led" class="btn btn-sm btn-ghost">Clear all</button>
+            <button id="btn-autodetect" class="btn btn-sm btn-primary" data-i18n="btn.autodetect">Auto-detect LEDs</button>
+            <button id="btn-clear-led" class="btn btn-sm btn-ghost" data-i18n="btn.clearAll">Clear all</button>
           </div>
           <ul id="object-tree" class="object-tree"></ul>
           <div id="empty-tree" class="empty-state">
-            <div>No model loaded</div>
-            <small>Import a SketchUp export (.dae / .obj / .gltf / .fbx) to begin</small>
+            <div data-i18n="tree.empty">No model loaded</div>
+            <small data-i18n="tree.empty.sub">Import a SketchUp export (.dae / .obj / .gltf / .fbx) to begin</small>
           </div>
         </div>
       </div>
 
       <div class="panel" style="flex:1">
         <div class="panel-header">
-          <span>◆ LED Panels</span>
+          <span data-i18n="panel.leds">◆ LED Panels</span>
           <span id="led-count" class="badge badge-accent">0</span>
         </div>
         <div class="panel-body">
+          <div class="led-actions-row">
+            <button id="btn-group-selected" class="btn btn-sm btn-primary" data-i18n="btn.groupSelected" data-i18n-title="btn.groupSelected.title" disabled>Group selected</button>
+          </div>
           <ul id="led-list" class="led-list"></ul>
           <div id="empty-led" class="empty-state">
-            <div>No LED panels marked</div>
-            <small>Click objects in the 3D view or use Auto-detect</small>
+            <div data-i18n="led.empty">No LED panels marked</div>
+            <small data-i18n="led.empty.sub">Click objects in the 3D view or use Auto-detect</small>
           </div>
         </div>
       </div>
@@ -108,18 +131,15 @@
           <button id="cam-right" class="tool-btn" title="Right view (R)">R</button>
           <button id="cam-iso"   class="tool-btn" title="Iso view (I)">ISO</button>
           <span class="tool-sep"></span>
-          <button id="cam-fit"      class="tool-btn" title="Fit view (Space)">Fit</button>
-          <button id="toggle-grid"  class="tool-btn active" title="Toggle grid">Grid</button>
-          <button id="toggle-wire"  class="tool-btn" title="Wireframe">Wire</button>
+          <button id="cam-fit"      class="tool-btn" data-i18n-title="3d.fit.title" data-i18n="3d.fit">Fit</button>
+          <button id="toggle-grid"  class="tool-btn active" data-i18n-title="3d.grid.title" data-i18n="3d.grid">Grid</button>
+          <button id="toggle-wire"  class="tool-btn" data-i18n-title="3d.wire.title" data-i18n="3d.wire">Wire</button>
+          <button id="toggle-overlay-3d" class="tool-btn active" data-i18n-title="3d.overlay.title" data-i18n="3d.overlay">Mapled overlay</button>
           <span class="tool-sep"></span>
-          <button id="btn-undo" class="tool-btn" title="Undo (Ctrl+Z)">↩ Undo</button>
+          <button id="btn-undo" class="tool-btn" data-i18n-title="toolbar.undo.title" data-i18n="toolbar.undo">↩ Undo</button>
         </div>
-        <div class="view-hint">
-          <kbd>Click</kbd> mark LED &nbsp;·&nbsp;
-          <kbd>Ctrl+Click</kbd> toggle &nbsp;·&nbsp;
-          <kbd>Shift+Click</kbd> add to selection &nbsp;·&nbsp;
-          <kbd>Drag</kbd> orbit &nbsp;·&nbsp;
-          <kbd>Scroll</kbd> zoom
+        <div class="view-hint" data-i18n="hint.3d">
+          <kbd>Click</kbd> mark LED · <kbd>Drag</kbd> orbit
         </div>
         <div id="loading-overlay" class="loading-overlay hidden">
           <div class="spinner"></div>
@@ -130,11 +150,17 @@
       <div id="view-2d" class="view">
         <div class="canvas2d-toolbar">
           <div class="tool-group">
-            <button id="tool-select" class="tool-btn active" title="Select / Marquee (V)">Select</button>
-            <button id="tool-pan"    class="tool-btn" title="Pan (H)">Pan</button>
+            <button id="tool-select" class="tool-btn active" data-i18n-title="toolbar.select.title" data-i18n="toolbar.select">Select</button>
+            <button id="tool-pan"    class="tool-btn" data-i18n-title="toolbar.pan.title" data-i18n="toolbar.pan">Pan</button>
+            <button id="tool-mapled" class="tool-btn" data-i18n-title="toolbar.mapled.title" data-i18n="toolbar.mapled">Mapled</button>
           </div>
           <div class="tool-group">
-            <label class="tool-label">Scale</label>
+            <label class="tool-label" data-i18n="toolbar.activeGroup">Group</label>
+            <select id="group-active"></select>
+            <button id="btn-rename-group" class="tool-btn" data-i18n-title="toolbar.renameGroup" title="Rename group">✎</button>
+          </div>
+          <div class="tool-group">
+            <label class="tool-label" data-i18n="toolbar.scale">Scale</label>
             <select id="scale-select">
               <option value="1">100%</option>
               <option value="2">200%</option>
@@ -143,41 +169,32 @@
             </select>
           </div>
           <div class="tool-group">
-            <label class="tool-label">Grid</label>
+            <label class="tool-label" data-i18n="toolbar.grid">Grid</label>
             <input id="grid-size" type="number" min="1" max="500" value="50" />
-            <button id="toggle-snap" class="tool-btn active" title="Snap to grid">Snap</button>
+            <button id="toggle-snap" class="tool-btn active" data-i18n="toolbar.snap" title="Snap to grid">Snap</button>
           </div>
           <div class="tool-group">
-            <label class="tool-label">Pixel pitch (mm)</label>
+            <label class="tool-label" data-i18n="toolbar.pitch">Pixel pitch (mm)</label>
             <input id="pixel-pitch" type="number" min="0.1" step="0.1" value="3.9" />
           </div>
           <div class="tool-group">
-            <button id="auto-arrange" class="tool-btn">Mirror 3D</button>
-            <button id="reset-2d"     class="tool-btn btn-ghost">Reset</button>
-            <button id="btn-undo-2d"  class="tool-btn" title="Undo (Ctrl+Z)">↩ Undo</button>
+            <button id="auto-arrange" class="tool-btn" data-i18n-title="toolbar.autoAlign.title" data-i18n="toolbar.autoAlign">Auto-align</button>
+            <button id="mapled-fit" class="tool-btn" data-i18n-title="toolbar.fitMapled.title" data-i18n="toolbar.fitMapled">Fit mapled</button>
+            <button id="reset-2d"     class="tool-btn btn-ghost" data-i18n="toolbar.reset">Reset</button>
+            <button id="btn-undo-2d"  class="tool-btn" data-i18n-title="toolbar.undo.title" data-i18n="toolbar.undo">↩ Undo</button>
           </div>
           <div class="tool-group" id="preview-group">
-            <label class="tool-label">Opacity</label>
+            <label class="tool-label" data-i18n="toolbar.opacity">Opacity</label>
             <input id="mapled-opacity" type="range" min="0" max="100" value="60" />
-            <button id="toggle-preview" class="tool-btn" title="Preview mode">Preview</button>
-            <button id="toggle-mask"    class="tool-btn" title="Mask outside LEDs">Mask</button>
-          </div>
-          <div class="tool-group hidden" id="video-controls">
-            <button id="vid-play" class="tool-btn">▶</button>
-            <input id="vid-seek" type="range" min="0" max="1000" value="0" />
-            <span id="vid-time" class="tool-label">00:00 / 00:00</span>
+            <button id="toggle-preview" class="tool-btn" data-i18n-title="toolbar.preview.title" data-i18n="toolbar.preview">Preview</button>
+            <button id="toggle-mask"    class="tool-btn" data-i18n-title="toolbar.mask.title" data-i18n="toolbar.mask">Mask</button>
           </div>
         </div>
         <div id="canvas2d-container" class="canvas2d-container">
           <canvas id="canvas2d"></canvas>
         </div>
-        <div class="view-hint">
-          <kbd>Drag</kbd> marquee &nbsp;·&nbsp;
-          <kbd>Shift+Drag</kbd> add &nbsp;·&nbsp;
-          <kbd>H</kbd> pan &nbsp;·&nbsp;
-          <kbd>R</kbd> rotate 90° &nbsp;·&nbsp;
-          <kbd>Del</kbd> remove &nbsp;·&nbsp;
-          <kbd>Ctrl+Scroll</kbd> zoom
+        <div class="view-hint" data-i18n="hint.2d">
+          <kbd>H</kbd> pan · <kbd>M</kbd> mapled · <kbd>R</kbd> rotate 90° · <kbd>Del</kbd> remove
         </div>
       </div>
     </section>
@@ -186,35 +203,35 @@
     <aside class="sidebar sidebar-right">
       <div class="panel">
         <div class="panel-header">
-          <span>◆ Properties</span>
+          <span data-i18n="panel.props">◆ Properties</span>
           <span id="props-name" class="badge">—</span>
         </div>
         <div class="panel-body" id="props-body">
           <div class="empty-state">
-            <div>No LED selected</div>
-            <small>Select a panel in the 3D or 2D view to edit its properties</small>
+            <div data-i18n="props.empty">No LED selected</div>
+            <small data-i18n="props.empty.sub">Select a panel in the 3D or 2D view to edit its properties</small>
           </div>
         </div>
       </div>
 
       <div class="panel">
-        <div class="panel-header">◆ Project Overview</div>
+        <div class="panel-header" data-i18n="panel.overview">◆ Project Overview</div>
         <div class="panel-body">
           <div class="stat-grid">
             <div class="stat">
-              <div class="stat-label">LED Panels</div>
+              <div class="stat-label" data-i18n="stat.leds">LED Panels</div>
               <div class="stat-value" id="stat-total">0</div>
             </div>
             <div class="stat">
-              <div class="stat-label">Total px W</div>
+              <div class="stat-label" data-i18n="stat.totalPxW">Total px W</div>
               <div class="stat-value" id="stat-pix-w">0</div>
             </div>
             <div class="stat">
-              <div class="stat-label">Max px H</div>
+              <div class="stat-label" data-i18n="stat.maxPxH">Max px H</div>
               <div class="stat-value" id="stat-pix-h">0</div>
             </div>
             <div class="stat">
-              <div class="stat-label">Area m²</div>
+              <div class="stat-label" data-i18n="stat.area">Area m²</div>
               <div class="stat-value" id="stat-area">0.00</div>
             </div>
           </div>
@@ -222,13 +239,13 @@
       </div>
 
       <div class="panel">
-        <div class="panel-header">◆ Quick Guide</div>
+        <div class="panel-header" data-i18n="panel.guide">◆ Quick Guide</div>
         <div class="panel-body small-text">
           <ol class="howto">
-            <li>In SketchUp, <b>name your LED groups</b> "LED" then export as <code>.dae</code> or <code>.gltf</code> and open here.</li>
-            <li>Click any group or mesh in the 3D view to mark it. Click a <b>LED-named group</b> to mark all panels inside at once. Use <b>Auto-detect LEDs</b> for quick detection.</li>
-            <li>Switch to <b>2D Mapping</b>, load a <b>Mapled</b> reference image or video, then drag panels to match.</li>
-            <li>Use <b>Preview</b> to see video mapped onto LEDs. <b>Save</b> your project (Ctrl+S) to resume later.</li>
+            <li data-i18n="guide.l1"></li>
+            <li data-i18n="guide.l2"></li>
+            <li data-i18n="guide.l3"></li>
+            <li data-i18n="guide.l4"></li>
           </ol>
         </div>
       </div>
@@ -236,7 +253,7 @@
   </main>
 
   <footer class="statusbar">
-    <span id="status-text">Ready. Open a 3D model to begin.</span>
+    <span id="status-text" data-i18n="status.ready">Ready. Open a 3D model to begin.</span>
     <span class="spacer"></span>
     <span id="status-mode">Mode: 3D</span>
     <span id="status-fps">— FPS</span>

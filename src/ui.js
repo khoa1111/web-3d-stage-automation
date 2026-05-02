@@ -1,6 +1,7 @@
 // UI bindings: object tree, LED list, properties panel, stats.
 
-import { $, fmt, ledColor } from './utils.js';
+import { $, fmt } from './utils.js';
+import { i18n, t } from './i18n.js';
 
 export class UI {
   constructor(ledManager, viewer3d, editor2d) {
@@ -24,6 +25,14 @@ export class UI {
       this.renderProps();
     });
 
+    // Re-render dynamic content on language change.
+    i18n.addEventListener('change', () => {
+      this.renderObjectTree();
+      this.renderLedList();
+      this.renderProps();
+      this.renderStats();
+    });
+
     $('#search-obj').addEventListener('input', (e) => {
       this._search = e.target.value.toLowerCase();
       this.renderObjectTree();
@@ -38,7 +47,6 @@ export class UI {
           node.children.forEach((c) => addNode(c, 0));
           return;
         }
-        // Include only nodes that have at least one mesh descendant.
         if (!_hasMesh(node)) return;
         const name = node.name || (node.isMesh ? '(mesh)' : '(group)');
         this._objectIndex.push({ node, name, depth, isGroup: !node.isMesh });
@@ -96,7 +104,7 @@ export class UI {
       li.innerHTML = `
         ${iconHtml}
         <span class="obj-name" title="${escHtml(name)}">${escHtml(name)}</span>
-        <button class="toggle-led" title="${ledStatus === 'full' ? 'Remove LED mark' : 'Mark as LED'}">${toggleLabel}</button>
+        <button class="toggle-led" title="${ledStatus === 'full' ? t('led.remove.title') : 'Mark as LED'}">${toggleLabel}</button>
       `;
 
       li.addEventListener('click', (e) => {
@@ -145,29 +153,53 @@ export class UI {
     count.textContent = leds.length;
     empty.classList.toggle('hidden', leds.length > 0);
 
+    // "Group selected" button is enabled only when at least one LED is selected.
+    const groupBtn = $('#btn-group-selected');
+    if (groupBtn) groupBtn.disabled = this.ledManager.selection.size === 0;
+
     leds.forEach((led) => {
       const isSelected = this.ledManager.isSelected(led.id);
       const li = document.createElement('li');
-      li.className = 'led-item' + (isSelected ? ' selected' : '');
+      li.className = 'led-item'
+        + (isSelected ? ' selected' : '')
+        + (led.locked ? ' locked' : '');
+
+      const groupBadge = led.group
+        ? `<span class="led-group-badge">${escHtml(led.group)}</span>`
+        : '';
 
       li.innerHTML = `
         <span class="led-color" style="background:${led.color}"></span>
         <div style="flex:1;min-width:0">
-          <div class="led-name" title="${escHtml(led.name)}">${escHtml(led.name)}</div>
+          <div class="led-name" title="${escHtml(led.name)}">${escHtml(led.name)} ${groupBadge}</div>
           <div class="led-info">${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px</div>
         </div>
-        <button class="led-remove" title="Remove LED">✕</button>
+        <button class="led-lock ${led.locked ? 'is-locked' : ''}" title="${escAttr(t('led.lock.title'))}" aria-label="${escAttr(t('led.lock.title'))}">
+          ${_lockIcon(led.locked)}
+        </button>
+        <button class="led-remove" title="${escAttr(t('led.remove.title'))}">✕</button>
       `;
 
       li.addEventListener('click', (e) => {
-        if (e.target.classList.contains('led-remove')) return;
+        if (e.target.closest('.led-remove') || e.target.closest('.led-lock')) return;
+        if (led.locked) return; // locked LEDs cannot be selected from the list either
         if (e.ctrlKey || e.metaKey) this.ledManager.toggleSelection(led.id);
         else this.ledManager.select(led.id, false);
         this.viewer.focusOnLed(led);
       });
 
+      li.querySelector('.led-lock').addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Snapshot for undo.
+        window.__app?.undo?.pushSnapshot('lock-toggle');
+        this.ledManager.setLocked(led.id, !led.locked);
+        const { toast } = window.__app?.utils || {};
+        if (toast) toast(led.locked ? t('toast.unlocked') : t('toast.locked'), 'info', 1500);
+      });
+
       li.querySelector('.led-remove').addEventListener('click', (e) => {
         e.stopPropagation();
+        if (led.locked) return;
         this.ledManager.remove(led.id);
       });
 
@@ -181,11 +213,11 @@ export class UI {
     const nameBadge = $('#props-name');
     const sel = [...this.ledManager.selection];
     if (sel.length !== 1) {
-      nameBadge.textContent = sel.length ? `${sel.length} LED` : '—';
+      nameBadge.textContent = sel.length ? `${sel.length} ${t('props.multi')}` : '—';
       body.innerHTML = `
         <div class="empty-state">
-          <div>${sel.length ? `${sel.length} LEDs selected` : 'No LED selected'}</div>
-          <small>${sel.length ? 'Select a single LED to edit properties' : 'Click an LED in the 3D view or the list'}</small>
+          <div>${sel.length ? `${sel.length} ${t('props.multi')}` : t('props.empty')}</div>
+          <small>${sel.length ? t('props.multi.sub') : t('props.empty.sub')}</small>
         </div>
       `;
       return;
@@ -194,39 +226,52 @@ export class UI {
     if (!led) return;
     nameBadge.textContent = led.name;
 
+    const groups = this.ledManager.listGroups().filter(Boolean);
+    const groupOptions = ['', ...groups].map(g =>
+      `<option value="${escAttr(g)}" ${(led.group || '') === g ? 'selected' : ''}>${escHtml(g || t('toolbar.activeGroup.ungrouped'))}</option>`
+    ).join('');
+
     body.innerHTML = `
       <div class="prop-group">
-        <div class="prop-group-title">Identity</div>
+        <div class="prop-group-title">${escHtml(t('props.identity'))}</div>
         <div class="prop-row">
-          <label>Name</label><input id="p-name" type="text" value="${escAttr(led.name)}" />
+          <label>${escHtml(t('props.name'))}</label><input id="p-name" type="text" value="${escAttr(led.name)}" />
         </div>
         <div class="prop-row">
-          <label>Color</label><input id="p-color" type="color" class="prop-color" value="${hslToHexStr(led.color)}" />
-        </div>
-      </div>
-      <div class="prop-group">
-        <div class="prop-group-title">Physical size</div>
-        <div class="prop-row">
-          <label>Width (mm)</label><input id="p-realw" type="number" min="1" value="${led.realW}" />
+          <label>${escHtml(t('props.color'))}</label><input id="p-color" type="color" class="prop-color" value="${hslToHexStr(led.color)}" />
         </div>
         <div class="prop-row">
-          <label>Height (mm)</label><input id="p-realh" type="number" min="1" value="${led.realH}" />
-        </div>
-      </div>
-      <div class="prop-group">
-        <div class="prop-group-title">Pixels</div>
-        <div class="prop-row">
-          <label>Pitch (mm)</label><input id="p-pitch" type="number" min="0.1" step="0.1" value="${led.pixelPitch}" />
+          <label>${escHtml(t('props.group'))}</label>
+          <select id="p-group">${groupOptions}</select>
         </div>
         <div class="prop-row">
-          <label>Pixel W</label><input id="p-pixw" type="number" min="1" value="${led.pixelW}" />
-        </div>
-        <div class="prop-row">
-          <label>Pixel H</label><input id="p-pixh" type="number" min="1" value="${led.pixelH}" />
+          <label>${escHtml(t('props.locked'))}</label>
+          <input id="p-locked" type="checkbox" ${led.locked ? 'checked' : ''} />
         </div>
       </div>
       <div class="prop-group">
-        <div class="prop-group-title">2D position (px)</div>
+        <div class="prop-group-title">${escHtml(t('props.size'))}</div>
+        <div class="prop-row">
+          <label>${escHtml(t('props.width'))}</label><input id="p-realw" type="number" min="1" value="${led.realW}" />
+        </div>
+        <div class="prop-row">
+          <label>${escHtml(t('props.height'))}</label><input id="p-realh" type="number" min="1" value="${led.realH}" />
+        </div>
+      </div>
+      <div class="prop-group">
+        <div class="prop-group-title">${escHtml(t('props.pixels'))}</div>
+        <div class="prop-row">
+          <label>${escHtml(t('props.pitch'))}</label><input id="p-pitch" type="number" min="0.1" step="0.1" value="${led.pixelPitch}" />
+        </div>
+        <div class="prop-row">
+          <label>${escHtml(t('props.pixW'))}</label><input id="p-pixw" type="number" min="1" value="${led.pixelW}" />
+        </div>
+        <div class="prop-row">
+          <label>${escHtml(t('props.pixH'))}</label><input id="p-pixh" type="number" min="1" value="${led.pixelH}" />
+        </div>
+      </div>
+      <div class="prop-group">
+        <div class="prop-group-title">${escHtml(t('props.pos2d'))}</div>
         <div class="prop-row">
           <label>X</label><input id="p-x" type="number" value="${fmt(led.map2d.x, 1)}" />
         </div>
@@ -240,14 +285,14 @@ export class UI {
           <label>H</label><input id="p-h" type="number" value="${fmt(led.map2d.h, 1)}" />
         </div>
         <div class="prop-row">
-          <label>Rotate (°)</label><input id="p-rot" type="number" step="1" value="${fmt((led.map2d.rotation || 0) * 180 / Math.PI, 1)}" />
+          <label>${escHtml(t('props.rotate'))}</label><input id="p-rot" type="number" step="1" value="${fmt((led.map2d.rotation || 0) * 180 / Math.PI, 1)}" />
         </div>
       </div>
       <div class="prop-group">
-        <div class="prop-group-title">3D position (m)</div>
-        <div class="prop-row"><label>Center X</label><input type="number" disabled value="${fmt(led.world.cx, 2)}" /></div>
-        <div class="prop-row"><label>Center Y</label><input type="number" disabled value="${fmt(led.world.cy, 2)}" /></div>
-        <div class="prop-row"><label>Center Z</label><input type="number" disabled value="${fmt(led.world.cz, 2)}" /></div>
+        <div class="prop-group-title">${escHtml(t('props.pos3d'))}</div>
+        <div class="prop-row"><label>${escHtml(t('props.cx'))}</label><input type="number" disabled value="${fmt(led.world.cx, 2)}" /></div>
+        <div class="prop-row"><label>${escHtml(t('props.cy'))}</label><input type="number" disabled value="${fmt(led.world.cy, 2)}" /></div>
+        <div class="prop-row"><label>${escHtml(t('props.cz'))}</label><input type="number" disabled value="${fmt(led.world.cz, 2)}" /></div>
       </div>
     `;
 
@@ -262,6 +307,14 @@ export class UI {
 
     $('#p-name').addEventListener('input', (e) => this.ledManager.rename(led.id, e.target.value));
     $('#p-color').addEventListener('input', (e) => this.ledManager.update(led.id, { color: e.target.value }));
+    $('#p-group').addEventListener('change', (e) => {
+      window.__app?.undo?.pushSnapshot('group-change');
+      this.ledManager.update(led.id, { group: e.target.value });
+    });
+    $('#p-locked').addEventListener('change', (e) => {
+      window.__app?.undo?.pushSnapshot('lock-toggle');
+      this.ledManager.setLocked(led.id, e.target.checked);
+    });
     onNum('#p-realw', 'realW');
     onNum('#p-realh', 'realH');
     onNum('#p-pitch', 'pixelPitch');
@@ -276,11 +329,11 @@ export class UI {
 
   // ============ Stats ============
   renderStats() {
-    const t = this.ledManager.computeTotals();
-    $('#stat-total').textContent = t.count;
-    $('#stat-pix-w').textContent = t.pixelWidthSum.toLocaleString();
-    $('#stat-pix-h').textContent = t.pixelHeightMax.toLocaleString();
-    $('#stat-area').textContent = t.areaM2.toFixed(2);
+    const totals = this.ledManager.computeTotals();
+    $('#stat-total').textContent = totals.count;
+    $('#stat-pix-w').textContent = totals.pixelWidthSum.toLocaleString();
+    $('#stat-pix-h').textContent = totals.pixelHeightMax.toLocaleString();
+    $('#stat-area').textContent = totals.areaM2.toFixed(2);
   }
 }
 
@@ -319,4 +372,12 @@ function hslToHexStr(hsl) {
   };
   const hex = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
   return `#${hex(f(0))}${hex(f(8))}${hex(f(4))}`;
+}
+
+function _lockIcon(locked) {
+  // Lucide lock / lock-open inline SVG (14px).
+  if (locked) {
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+  }
+  return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
 }

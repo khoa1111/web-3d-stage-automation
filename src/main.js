@@ -3,12 +3,13 @@
 
 import { LedManager } from './ledManager.js';
 import { Viewer3D } from './viewer3d.js';
-import { Editor2D } from './editor2d.js';
+import { Editor2D, GROUP_ALL } from './editor2d.js';
 import { UI } from './ui.js';
 import { UndoStack } from './undoStack.js';
 import { SectionsManager } from './sectionsManager.js';
 import { loadModelFromFile } from './fileLoader.js';
 import { $, looksLikeLed, readFileAsDataURL, setStatus, toast } from './utils.js';
+import { i18n, t } from './i18n.js';
 
 // ============ Module instances ============
 
@@ -21,12 +22,29 @@ const ui = new UI(ledManager, viewer, editor);
 const undo = new UndoStack(ledManager, editor, { max: 5 });
 const sections = new SectionsManager(ledManager, viewer, editor, undo);
 
-// Make toast() reachable from undoStack without circular import.
+// 3D mapled overlay (depends on editor; construct after both exist).
+viewer.attachEditor(editor);
+
+// Make toast() reachable from undoStack and the UI without circular import.
 window.__toast = toast;
 
 // Wire editor "transaction-start" → undo snapshot.
 editor.addEventListener('transaction-start', (e) => {
   undo.pushSnapshot(e.detail?.kind || 'edit-2d');
+});
+
+// ============ i18n bootstrap ============
+document.documentElement.setAttribute('lang', i18n.lang);
+i18n.applyTo(document);
+$('#btn-lang-label').textContent = i18n.lang === 'vi' ? 'VI' : 'EN';
+$('#btn-lang').addEventListener('click', () => {
+  i18n.toggle();
+  $('#btn-lang-label').textContent = i18n.lang === 'vi' ? 'VI' : 'EN';
+  toast(t('toast.langChanged'), 'info', 1800);
+  // Refresh dynamic chrome that depends on language.
+  updateModeStatus();
+  updateFreezeAllLabel();
+  rebuildGroupDropdown();
 });
 
 // ============ Mode switching ============
@@ -42,7 +60,7 @@ function setMode(mode) {
   b2.classList.toggle('active', !isThree);
   b3.setAttribute('aria-selected', String(isThree));
   b2.setAttribute('aria-selected', String(!isThree));
-  $('#status-mode').textContent = `Mode: ${isThree ? '3D' : '2D Mapping'}`;
+  updateModeStatus();
 
   // Pause video when leaving 2D, optionally resume when returning.
   const vid = editor.getVideo();
@@ -57,17 +75,23 @@ function setMode(mode) {
   if (isThree) requestAnimationFrame(() => viewer.resize());
   else requestAnimationFrame(() => { editor.resize(); editor.render(); });
 }
+
+function updateModeStatus() {
+  const v2 = $('#view-2d');
+  const isThree = !v2.classList.contains('view-active');
+  $('#status-mode').textContent = `${t('status.mode')}: ${isThree ? t('status.mode.3d') : t('status.mode.2d')}`;
+}
 $('#mode-3d').addEventListener('click', () => setMode('3d'));
 $('#mode-2d').addEventListener('click', () => setMode('2d'));
 
 // ============ 3D file handling ============
 async function handle3DFile(file) {
   if (!file) return;
-  showLoading(`Loading ${file.name}…`);
+  showLoading(`${t('toast.loaded')} ${file.name}…`);
   try {
     const { root, fileName } = await loadModelFromFile(file);
     afterModelLoaded(root, fileName);
-    toast(`Loaded ${fileName}`, 'success');
+    toast(`${t('toast.loaded')} ${fileName}`, 'success');
   } catch (err) {
     console.error(err);
     toast(err.message || 'Failed to load 3D file', 'error', 6000);
@@ -82,7 +106,7 @@ function afterModelLoaded(root, fileName) {
   viewer.setModel(root);
   ui.setModel(root);
   undo.clear();
-  setStatus(`Loaded: ${fileName} · ${countMeshes(root)} objects`);
+  setStatus(`${t('toast.loaded')}: ${fileName} · ${countMeshes(root)} ${t('stat.leds')}`);
   setMode('3d');
 }
 
@@ -95,7 +119,7 @@ function countMeshes(root) {
 $('#file-3d').addEventListener('change', (e) => handle3DFile(e.target.files[0]));
 
 // ============ Mapled image / video ============
-let _mapledObjectUrl = null;
+let _mapledObjectUrls = []; // we keep a few for per-group videos
 
 $('#file-mapled').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -104,15 +128,9 @@ $('#file-mapled').addEventListener('change', async (e) => {
 });
 
 async function loadMapledFile(file) {
-  // Revoke previous object URL to avoid leaks.
-  if (_mapledObjectUrl) {
-    URL.revokeObjectURL(_mapledObjectUrl);
-    _mapledObjectUrl = null;
-  }
-
   if (file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/i.test(file.name)) {
     const url = URL.createObjectURL(file);
-    _mapledObjectUrl = url;
+    _mapledObjectUrls.push(url);
     const video = document.createElement('video');
     video.src = url;
     video.loop = true;
@@ -124,9 +142,9 @@ async function loadMapledFile(file) {
       video.addEventListener('error', () => rej(new Error('Could not read video')), { once: true });
     });
     editor.setMapledImage(video);
-    setupVideoControls(video);
+    bindVideoControls(video);
     setMode('2d');
-    toast(`Video loaded (${video.videoWidth}×${video.videoHeight}, ${formatTime(video.duration)})`, 'success');
+    toast(t('toast.videoLoaded', { w: video.videoWidth, h: video.videoHeight, time: formatTime(video.duration) }), 'success');
   } else if (file.type.startsWith('image/')) {
     try {
       const url = await readFileAsDataURL(file);
@@ -139,16 +157,24 @@ async function loadMapledFile(file) {
       editor.setMapledImage(img);
       hideVideoControls();
       setMode('2d');
-      toast(`Mapled loaded (${img.naturalWidth}×${img.naturalHeight})`, 'success');
+      toast(t('toast.imageLoaded', { w: img.naturalWidth, h: img.naturalHeight }), 'success');
     } catch (err) {
       toast(err.message, 'error');
     }
   } else {
-    toast('Unsupported file format', 'warn');
+    toast(t('toast.unsupported'), 'warn');
   }
 }
 
-function setupVideoControls(video) {
+// Global topbar video controls — bind/rebind to whichever video is currently
+// "active" (the active group's, or null).
+let _videoBindCleanup = null;
+
+function bindVideoControls(video) {
+  if (_videoBindCleanup) _videoBindCleanup();
+  _videoBindCleanup = null;
+  if (!video) { hideVideoControls(); return; }
+
   const ctrls = $('#video-controls');
   ctrls.classList.remove('hidden');
   const playBtn = $('#vid-play');
@@ -162,24 +188,35 @@ function setupVideoControls(video) {
     timeLbl.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
   };
 
-  playBtn.onclick = () => {
+  const onPlayClick = () => {
     if (video.paused) video.play().catch(() => {});
     else video.pause();
     updateBtn();
   };
-  seek.oninput = () => {
+  const onSeek = () => {
     if (!isFinite(video.duration)) return;
     video.currentTime = (+seek.value / 1000) * video.duration;
     updateTime();
   };
+  playBtn.onclick = onPlayClick;
+  seek.oninput = onSeek;
   video.addEventListener('play', updateBtn);
   video.addEventListener('pause', updateBtn);
   video.addEventListener('timeupdate', updateTime);
   updateBtn(); updateTime();
+
+  _videoBindCleanup = () => {
+    playBtn.onclick = null;
+    seek.oninput = null;
+    video.removeEventListener('play', updateBtn);
+    video.removeEventListener('pause', updateBtn);
+    video.removeEventListener('timeupdate', updateTime);
+  };
 }
 
 function hideVideoControls() {
   $('#video-controls').classList.add('hidden');
+  if (_videoBindCleanup) { _videoBindCleanup(); _videoBindCleanup = null; }
 }
 
 function formatTime(sec) {
@@ -192,22 +229,19 @@ function formatTime(sec) {
 // ============ Auto-detect / Clear LEDs ============
 $('#btn-autodetect').addEventListener('click', () => {
   if (!viewer.modelRoot) {
-    toast('Import a 3D model first', 'warn');
+    toast(t('toast.import3dFirst'), 'warn');
     return;
   }
   undo.pushSnapshot('auto-detect');
 
   let total = 0;
-  // Suppress per-mesh undo snapshots throughout the entire detection pass.
   ledManager._inBatchAdd = true;
   try {
-    // 1. Walk model hierarchy — add any Group/Object3D named like an LED screen.
     const LED_RE = /led|screen|display|panel/i;
     viewer.modelRoot.traverse((node) => {
       if (!node.isMesh && LED_RE.test(node.name || '')) {
         node.traverse((o) => {
           if (o.isMesh && !ledManager.has(o.uuid)) {
-            // _inBatchAdd suppresses undo inside the patched ledManager.add.
             const r = ledManager.add(o);
             if (r) total++;
           }
@@ -215,14 +249,12 @@ $('#btn-autodetect').addEventListener('click', () => {
       }
     });
 
-    // 2. Mesh-level name detection (fallback for ungrouped meshes).
     const byName = viewer.autoDetectLEDs((m) => {
       if (ledManager.has(m.uuid)) return false;
       return looksLikeLed(m);
     });
     total += byName.length;
 
-    // 3. Size-based detection — find meshes with same bounding box as marked LEDs.
     if (ledManager.list().length > 0) {
       const pred = ledManager.sizePredicate(0.05);
       const bySize = viewer.autoDetectLEDs((m) => !ledManager.has(m.uuid) && pred(m));
@@ -232,13 +264,13 @@ $('#btn-autodetect').addEventListener('click', () => {
     ledManager._inBatchAdd = false;
   }
 
-  if (total) toast(`Auto-detected ${total} LED panels`, 'success');
-  else toast('No LED objects found by name or size. Click panels manually in the 3D view.', 'info', 5000);
+  if (total) toast(t('toast.detected', { n: total }), 'success');
+  else toast(t('toast.detected.none'), 'info', 5000);
 });
 
 $('#btn-clear-led').addEventListener('click', () => {
   if (!ledManager.list().length) return;
-  if (!confirm('Remove all LED marks?')) return;
+  if (!confirm(t('toast.confirmClear'))) return;
   undo.pushSnapshot('clear-all-leds');
   for (const led of ledManager.list()) ledManager.remove(led.id);
 });
@@ -263,12 +295,11 @@ wireBtn.addEventListener('click', () => {
   wireBtn.classList.toggle('active', on);
   viewer.setWireframe(on);
 });
-
-// 3D viewer should also push undo snapshots when LEDs are toggled by clicking.
-viewer.renderer.domElement.addEventListener('pointerdown', () => {
-  // We can't easily know if this click will toggle a LED before the click resolves;
-  // simpler: snapshot on any click that lands on a mesh.
-  // Defer to viewer's own logic; we add undo at the toggleByMesh wrapper below.
+const overlay3dBtn = $('#toggle-overlay-3d');
+overlay3dBtn.addEventListener('click', () => {
+  const on = !overlay3dBtn.classList.contains('active');
+  overlay3dBtn.classList.toggle('active', on);
+  editor.setOverlay3dEnabled(on);
 });
 
 // Wrap ledManager mutation methods to push undo snapshots.
@@ -331,22 +362,31 @@ $('#pixel-pitch').addEventListener('input', (e) => {
 
 $('#mapled-opacity').addEventListener('input', (e) => editor.setMapledOpacity(+e.target.value / 100));
 $('#auto-arrange').addEventListener('click', () => {
-  if (!ledManager.list().length) { toast('No LEDs to arrange', 'warn'); return; }
+  if (!ledManager.list().length) { toast(t('toast.noLeds'), 'warn'); return; }
   undo.pushSnapshot('auto-arrange');
   ledManager.autoArrangeFromWorld(120, 60, 60);
   editor.resetView();
-  toast('2D positions mirrored from 3D layout', 'success');
+  toast(t('toast.aligned'), 'success');
+});
+$('#mapled-fit').addEventListener('click', () => {
+  if (!editor.autoFitMapled()) {
+    toast(t('toast.noLeds'), 'warn');
+    return;
+  }
+  toast(t('toast.fitted'), 'success');
 });
 $('#reset-2d').addEventListener('click', () => editor.resetView());
 
 // Tool toggle.
-const toolSelectBtn = $('#tool-select'), toolPanBtn = $('#tool-pan');
+const toolSelectBtn = $('#tool-select'), toolPanBtn = $('#tool-pan'), toolMapledBtn = $('#tool-mapled');
 toolSelectBtn.addEventListener('click', () => switchTool('select'));
 toolPanBtn.addEventListener('click', () => switchTool('pan'));
+toolMapledBtn.addEventListener('click', () => switchTool('mapled'));
 function switchTool(t) {
   editor.setTool(t);
   toolSelectBtn.classList.toggle('active', t === 'select');
   toolPanBtn.classList.toggle('active', t === 'pan');
+  toolMapledBtn.classList.toggle('active', t === 'mapled');
 }
 
 // Preview mode + Mask toggles.
@@ -365,6 +405,101 @@ maskBtn.addEventListener('click', () => {
 // Undo buttons in both views.
 $('#btn-undo').addEventListener('click', () => undo.undo());
 $('#btn-undo-2d').addEventListener('click', () => undo.undo());
+
+// ============ Groups & locking ============
+
+// "Group selected" button — assigns currently-selected LEDs to a new group.
+$('#btn-group-selected').addEventListener('click', () => {
+  if (!ledManager.selection.size) {
+    toast(t('toast.noSelection'), 'warn');
+    return;
+  }
+  const suggested = ledManager._nextGroupName();
+  const name = window.prompt(t('prompt.groupName'), suggested);
+  if (name === null) return;
+  const finalName = name.trim() || suggested;
+  undo.pushSnapshot('group-selected');
+  const result = ledManager.groupSelected(finalName);
+  if (result) {
+    toast(t('toast.grouped', { n: result.count, g: result.name }), 'success');
+    rebuildGroupDropdown(result.name);
+    editor.setActiveGroup(result.name);
+  }
+});
+
+// Active group dropdown — reflects ledManager.listGroups() plus an "All" sentinel.
+const groupSelect = $('#group-active');
+function rebuildGroupDropdown(activate) {
+  const groups = ledManager.listGroups();
+  const cur = activate ?? editor.activeGroup;
+  groupSelect.innerHTML = '';
+
+  // "All" sentinel
+  const optAll = document.createElement('option');
+  optAll.value = GROUP_ALL;
+  optAll.textContent = t('toolbar.activeGroup.all');
+  groupSelect.appendChild(optAll);
+
+  for (const g of groups) {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g || t('toolbar.activeGroup.ungrouped');
+    groupSelect.appendChild(opt);
+  }
+
+  groupSelect.value = cur ?? '';
+  if (groupSelect.selectedIndex < 0) groupSelect.value = GROUP_ALL;
+}
+groupSelect.addEventListener('change', () => {
+  const value = groupSelect.value;
+  editor.setActiveGroup(value === GROUP_ALL ? GROUP_ALL : value);
+  // Bind topbar video controls to the active group's video (if any).
+  bindVideoControls(editor.getVideo());
+});
+
+// Rename active group
+$('#btn-rename-group').addEventListener('click', () => {
+  const cur = editor.activeGroup;
+  if (cur === GROUP_ALL || !cur) {
+    toast(t('toolbar.activeGroup.ungrouped'), 'warn', 1500);
+    return;
+  }
+  const newName = window.prompt(t('prompt.renameGroup'), cur);
+  if (!newName || newName.trim() === cur) return;
+  undo.pushSnapshot('rename-group');
+  if (ledManager.renameGroup(cur, newName.trim())) {
+    rebuildGroupDropdown(newName.trim());
+    editor.setActiveGroup(newName.trim());
+  }
+});
+
+// Freeze all / unfreeze all
+function updateFreezeAllLabel() {
+  const lbl = $('#btn-freeze-all-label');
+  if (!lbl) return;
+  lbl.textContent = ledManager.allLocked() && ledManager.list().length > 0
+    ? t('topbar.unfreezeAll')
+    : t('topbar.freezeAll');
+}
+$('#btn-freeze-all').addEventListener('click', () => {
+  if (!ledManager.list().length) { toast(t('toast.noLeds'), 'warn'); return; }
+  undo.pushSnapshot('freeze-all');
+  const lockAll = !ledManager.allLocked();
+  ledManager.setLockedAll(lockAll);
+  toast(lockAll ? t('toast.frozen') : t('toast.unfrozen'), 'info');
+  updateFreezeAllLabel();
+});
+ledManager.addEventListener('change', () => {
+  updateFreezeAllLabel();
+  rebuildGroupDropdown();
+});
+ledManager.addEventListener('selection', () => {
+  // Keep "Group selected" button enabled state in sync (UI also handles it).
+});
+editor.addEventListener('group-changed', () => {
+  // Selecting the dropdown also fires this; rebind video controls each time.
+  bindVideoControls(editor.getVideo());
+});
 
 // ============ Save / Open project ============
 $('#btn-save-project').addEventListener('click', () => sections.openSaveDialog());
@@ -414,6 +549,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'i' || e.key === 'I') viewer.setCameraPreset('iso');
   else if (e.key === 'v' || e.key === 'V') switchTool('select');
   else if (e.key === 'h' || e.key === 'H') switchTool('pan');
+  else if (e.key === 'm' || e.key === 'M') switchTool('mapled');
   else if (e.key === ' ') {
     if (viewer.modelRoot) viewer.fitToObject(viewer.modelRoot);
     e.preventDefault();
@@ -436,11 +572,14 @@ editor.resize();
 ui.renderObjectTree();
 ui.renderLedList();
 ui.renderStats();
-setStatus('Ready. Open a 3D model to begin.');
+setStatus(t('status.ready'));
+updateModeStatus();
+updateFreezeAllLabel();
+rebuildGroupDropdown();
 
 // Start auto-save & offer restore from previous session.
 sections.startAutoSave();
 sections.maybeOfferRestore();
 
-// Expose for debugging.
-window.__app = { ledManager, viewer, editor, ui, undo, sections };
+// Expose for debugging and for the UI's internal handlers (lock toggle uses it).
+window.__app = { ledManager, viewer, editor, ui, undo, sections, utils: { toast } };

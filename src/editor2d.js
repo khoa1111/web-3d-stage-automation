@@ -2,17 +2,23 @@
 //
 // Core features:
 //   * Drag / 8-handle resize / rotate of LED rectangles
-//   * Marquee (rectangle) selection on empty canvas
 //   * Pan tool & view zoom
-//   * Mapled overlay supports both Image and Video sources
+//   * Mapled tool: drag and uniform-scale the mapled overlay; auto-fit to active group
+//   * Per-group mapled state (each LED group has its own image/video/position)
+//   * Lock-aware hit-testing (locked LEDs cannot be selected or moved)
 //   * Preview render mode (video clipped to LED rectangles, optional dark mask)
 //   * Emits 'transaction-start' on pointerdown that starts a mutating gesture
 //     (consumed by main.js to push an undo snapshot)
+//   * Emits 'mapled-changed' / 'group-changed' for the 3D overlay to consume
 
 import { clamp } from './utils.js';
 
 const HANDLE = 8; // px – size of resize handles
 const ROT_HANDLE_OFFSET = 22;
+
+// "All" sentinel — when active, every LED is shown but no per-group mapled is
+// drawn. Internally tracked as a special activeGroup value.
+export const GROUP_ALL = '__all__';
 
 export class Editor2D extends EventTarget {
   constructor(canvas, ledManager) {
@@ -27,28 +33,30 @@ export class Editor2D extends EventTarget {
     this.viewTx = 0;
     this.viewTy = 0;
 
-    // Background reference ("mapled") — Image or Video element.
-    /** @type {HTMLImageElement|HTMLVideoElement|null} */
-    this.mapledImage = null;
-    this.mapledOpacity = 0.6;
-    this.mapled = { x: 60, y: 60, scale: 1 };
+    // Per-group mapled state. Key is the group name ('' for ungrouped).
+    /** @type {Map<string, { image: any, x:number, y:number, scale:number, opacity:number }>} */
+    this._groups = new Map();
+    this.activeGroup = '';
+
     this._video = null;
     this._rafHandle = 0;
 
     // Tools / render modes.
-    this._tool = 'select';            // 'select' | 'pan'
+    this._tool = 'select';            // 'select' | 'pan' | 'mapled'
     this._renderMode = 'setup';       // 'setup' | 'preview'
     this._maskOutside = false;
+    this._overlay3dEnabled = true;
 
     // Editor state.
     this.gridSize = 50;
     this.snapToGrid = true;
-    this._mode = null; // 'drag'|'resize-NE'..|'rotate'|'pan'|'marquee'
+    this._mode = null;
     this._dragOrigin = null;
     this._dragLed = null;
     this._dragStart = null;
     this._lastPointer = null;
-    this._marquee = null; // { x0, y0, x1, y1, additive }
+
+    this._mapledEmitTimer = 0;
 
     this._bind();
     ledManager.on('change', () => this.render());
@@ -56,6 +64,63 @@ export class Editor2D extends EventTarget {
 
     this.resize();
     this.render();
+  }
+
+  // ============ Per-group mapled accessors ============
+  _ensureGroup(name) {
+    if (!this._groups.has(name)) {
+      this._groups.set(name, { image: null, x: 60, y: 60, scale: 1, opacity: 0.6 });
+    }
+    return this._groups.get(name);
+  }
+  _currentMapled() {
+    if (this.activeGroup === GROUP_ALL) return null;
+    return this._groups.get(this.activeGroup) || null;
+  }
+  _activeKey() { return this.activeGroup === GROUP_ALL ? '' : this.activeGroup; }
+
+  // Backwards-compatible properties (auto-save / undo read these directly).
+  get mapledImage() { return this._currentMapled()?.image || null; }
+  get mapled() {
+    const g = this._currentMapled();
+    return g ? { x: g.x, y: g.y, scale: g.scale } : { x: 60, y: 60, scale: 1 };
+  }
+  set mapled(v) {
+    if (!v) return;
+    const g = this._ensureGroup(this._activeKey());
+    if (typeof v.x === 'number') g.x = v.x;
+    if (typeof v.y === 'number') g.y = v.y;
+    if (typeof v.scale === 'number') g.scale = v.scale;
+    this.render();
+  }
+  get mapledOpacity() {
+    const g = this._currentMapled();
+    return g ? g.opacity : 0.6;
+  }
+  set mapledOpacity(v) {
+    const g = this._ensureGroup(this._activeKey());
+    g.opacity = clamp(+v, 0, 1);
+    this.render();
+  }
+
+  setActiveGroup(name) {
+    const v = (name == null) ? '' : String(name);
+    if (v === this.activeGroup) return;
+
+    const prev = this._currentMapled();
+    if (prev?.image instanceof HTMLVideoElement && !prev.image.paused) {
+      try { prev.image.pause(); } catch {}
+    }
+    this._stopVideoLoop();
+
+    this.activeGroup = v;
+
+    const cur = this._currentMapled();
+    this._video = (cur?.image instanceof HTMLVideoElement) ? cur.image : null;
+    if (this._video && !this._video.paused) this._startVideoLoop();
+
+    this.render();
+    this.dispatchEvent(new CustomEvent('group-changed', { detail: v }));
   }
 
   // ============ View transform helpers ============
@@ -79,41 +144,58 @@ export class Editor2D extends EventTarget {
   }
 
   setMapledImage(src) {
-    // Stop previous video loop, if any.
+    const key = this._activeKey();
+    const g = this._ensureGroup(key);
+
     this._stopVideoLoop();
+    if (g.image instanceof HTMLVideoElement && g.image !== src) {
+      try { g.image.pause(); } catch {}
+    }
     if (this._video && this._video !== src) {
       try { this._video.pause(); } catch {}
       this._video = null;
     }
 
-    this.mapledImage = src;
+    g.image = src;
     if (src) {
-      this.mapled.x = 60;
-      this.mapled.y = 60;
-      this.mapled.scale = 1;
+      g.x = 60; g.y = 60; g.scale = 1;
     }
     if (src instanceof HTMLVideoElement) {
       this._video = src;
-      // Drive render loop while playing.
       src.addEventListener('play', () => this._startVideoLoop());
       src.addEventListener('pause', () => { this._stopVideoLoop(); this.render(); });
       src.addEventListener('ended', () => { this._stopVideoLoop(); this.render(); });
-      // If already playing when assigned:
       if (!src.paused) this._startVideoLoop();
     }
     this.render();
+    this._emitMapledChanged();
   }
-  getVideo() { return this._video; }
 
-  setMapledOpacity(v) { this.mapledOpacity = clamp(v, 0, 1); this.render(); }
+  getVideo() {
+    const cur = this._currentMapled();
+    return (cur?.image instanceof HTMLVideoElement) ? cur.image : null;
+  }
+  getVideoFor(groupName) {
+    const g = this._groups.get(groupName == null ? '' : String(groupName));
+    return (g?.image instanceof HTMLVideoElement) ? g.image : null;
+  }
+
+  setMapledOpacity(v) {
+    this.mapledOpacity = v;
+    this._emitMapledChanged();
+  }
   setGridSize(v) { this.gridSize = Math.max(1, +v || 50); this.render(); }
   setSnap(on) { this.snapToGrid = !!on; }
 
   setTool(tool) {
-    this._tool = (tool === 'pan') ? 'pan' : 'select';
+    if (tool === 'pan') this._tool = 'pan';
+    else if (tool === 'mapled') this._tool = 'mapled';
+    else this._tool = 'select';
     this.container.classList.toggle('tool-pan', this._tool === 'pan');
     this.container.classList.toggle('tool-select', this._tool === 'select');
+    this.container.classList.toggle('tool-mapled', this._tool === 'mapled');
     this.dispatchEvent(new CustomEvent('tool-changed', { detail: this._tool }));
+    this.render();
   }
   getTool() { return this._tool; }
 
@@ -127,6 +209,12 @@ export class Editor2D extends EventTarget {
     this._maskOutside = !!on;
     this.render();
   }
+
+  setOverlay3dEnabled(on) {
+    this._overlay3dEnabled = !!on;
+    this.dispatchEvent(new CustomEvent('overlay-3d-toggled', { detail: this._overlay3dEnabled }));
+  }
+  getOverlay3dEnabled() { return this._overlay3dEnabled; }
 
   setViewScale(s) {
     const old = this.viewScale;
@@ -143,11 +231,60 @@ export class Editor2D extends EventTarget {
     this.render();
   }
 
+  // ============ Auto-fit mapled to active group ============
+  autoFitMapled() {
+    const cur = this._currentMapled();
+    if (!cur || !cur.image) return false;
+    const leds = this._activeGroupLeds().filter(l => !l.hidden);
+    if (!leds.length) return false;
+
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const led of leds) {
+      const cs = this._ledCorners(led);
+      for (const c of cs) {
+        if (c.x < x0) x0 = c.x;
+        if (c.y < y0) y0 = c.y;
+        if (c.x > x1) x1 = c.x;
+        if (c.y > y1) y1 = c.y;
+      }
+    }
+    const aw = x1 - x0, ah = y1 - y0;
+    if (aw <= 0 || ah <= 0) return false;
+
+    const sz = this._mapledNaturalSize(cur.image);
+    if (!sz.w || !sz.h) return false;
+
+    const sX = aw / sz.w;
+    const sY = ah / sz.h;
+    const s = Math.max(sX, sY);
+    const finalW = sz.w * s;
+    const finalH = sz.h * s;
+
+    this.dispatchEvent(new CustomEvent('transaction-start', { detail: { kind: 'mapled-fit' } }));
+    cur.scale = s;
+    cur.x = x0 + (aw - finalW) / 2;
+    cur.y = y0 + (ah - finalH) / 2;
+    this.render();
+    this._emitMapledChanged();
+    return true;
+  }
+
+  _activeGroupLeds() {
+    if (this.activeGroup === GROUP_ALL) return this.ledManager.list();
+    return this.ledManager.list().filter(l => (l.group || '') === this.activeGroup);
+  }
+
   // ============ Hit-testing ============
   _hitTest(wx, wy) {
+    if (this._tool === 'mapled') return this._hitTestMapled(wx, wy);
+
     const list = this.ledManager.list();
     for (let i = list.length - 1; i >= 0; i--) {
       const led = list[i];
+      // Locked LEDs and LEDs outside the active group are not interactive.
+      if (led.locked) continue;
+      if (this.activeGroup !== GROUP_ALL && (led.group || '') !== this.activeGroup) continue;
+
       const m = led.map2d;
       const local = this._toLocal(led, wx, wy);
 
@@ -170,6 +307,35 @@ export class Editor2D extends EventTarget {
       if (local.x >= 0 && local.x <= m.w && local.y >= 0 && local.y <= m.h) {
         return { led, kind: 'drag' };
       }
+    }
+    return null;
+  }
+
+  _hitTestMapled(wx, wy) {
+    const cur = this._currentMapled();
+    if (!cur || !cur.image) return null;
+    const sz = this._mapledNaturalSize(cur.image);
+    const w = sz.w * cur.scale, h = sz.h * cur.scale;
+    const x = cur.x, y = cur.y;
+    const slop = (HANDLE + 4) / this.viewScale;
+
+    const corners = [
+      { id: 'NW', x: x,         y: y },
+      { id: 'NE', x: x + w,     y: y },
+      { id: 'SE', x: x + w,     y: y + h },
+      { id: 'SW', x: x,         y: y + h },
+      { id: 'N',  x: x + w / 2, y: y },
+      { id: 'E',  x: x + w,     y: y + h / 2 },
+      { id: 'S',  x: x + w / 2, y: y + h },
+      { id: 'W',  x: x,         y: y + h / 2 },
+    ];
+    for (const c of corners) {
+      if (Math.abs(wx - c.x) <= slop && Math.abs(wy - c.y) <= slop) {
+        return { kind: `mapled-resize-${c.id}` };
+      }
+    }
+    if (wx >= x && wx <= x + w && wy >= y && wy <= y + h) {
+      return { kind: 'mapled-drag' };
     }
     return null;
   }
@@ -208,12 +374,6 @@ export class Editor2D extends EventTarget {
     });
   }
 
-  _ledAABB(led) {
-    const cs = this._ledCorners(led);
-    const xs = cs.map(c => c.x), ys = cs.map(c => c.y);
-    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
-  }
-
   _snap(v) {
     if (!this.snapToGrid) return v;
     return Math.round(v / this.gridSize) * this.gridSize;
@@ -240,7 +400,6 @@ export class Editor2D extends EventTarget {
     const w = this._toWorld(px, py);
     this._lastPointer = { px, py };
 
-    // Pan: middle/right mouse, shift+alt, or active pan tool.
     const panMod = (e.button === 1) || (e.button === 2) || (e.shiftKey && e.altKey) || (this._tool === 'pan');
     if (panMod) {
       this._mode = 'pan';
@@ -250,16 +409,28 @@ export class Editor2D extends EventTarget {
     }
 
     const hit = this._hitTest(w.x, w.y);
-    if (!hit) {
-      // Empty space + select tool → marquee selection.
-      if (!e.shiftKey) this.ledManager.clearSelection();
-      this._mode = 'marquee';
-      this._marquee = { x0: w.x, y0: w.y, x1: w.x, y1: w.y, additive: e.shiftKey };
-      this.container.classList.add('marquee-active');
+
+    // Mapled tool: drag/resize the mapled overlay.
+    if (this._tool === 'mapled') {
+      if (!hit) return;
+      const cur = this._ensureGroup(this._activeKey());
+      this.dispatchEvent(new CustomEvent('transaction-start', { detail: { kind: 'mapled-move' } }));
+      this._mode = hit.kind;
+      const sz = this._mapledNaturalSize(cur.image);
+      this._dragOrigin = {
+        x: cur.x, y: cur.y, scale: cur.scale,
+        natW: sz.w, natH: sz.h,
+        worldDown: w,
+      };
       return;
     }
 
-    // Hit on a LED — start a mutating gesture.
+    // Empty canvas just clears selection.
+    if (!hit) {
+      if (!e.shiftKey) this.ledManager.clearSelection();
+      return;
+    }
+
     this.dispatchEvent(new CustomEvent('transaction-start', { detail: { kind: hit.kind } }));
 
     if (e.shiftKey) this.ledManager.toggleSelection(hit.led.id);
@@ -290,15 +461,15 @@ export class Editor2D extends EventTarget {
       return;
     }
 
-    if (this._mode === 'marquee') {
-      const w = this._toWorld(px, py);
-      this._marquee.x1 = w.x;
-      this._marquee.y1 = w.y;
+    const w = this._toWorld(px, py);
+
+    if (this._mode === 'mapled-drag' || this._mode.startsWith('mapled-resize-')) {
+      this._applyMapledTransform(w);
       this.render();
+      this._emitMapledChanged();
       return;
     }
 
-    const w = this._toWorld(px, py);
     const led = this._dragLed;
     if (!led) return;
     const m = led.map2d;
@@ -324,6 +495,56 @@ export class Editor2D extends EventTarget {
 
     this.ledManager._emit('change');
     this.dispatchEvent(new CustomEvent('led-edited', { detail: led }));
+  }
+
+  _applyMapledTransform(world) {
+    const cur = this._ensureGroup(this._activeKey());
+    const o = this._dragOrigin;
+    if (!o) return;
+
+    if (this._mode === 'mapled-drag') {
+      cur.x = o.x + (world.x - o.worldDown.x);
+      cur.y = o.y + (world.y - o.worldDown.y);
+      return;
+    }
+
+    const handle = this._mode.slice('mapled-resize-'.length);
+    const w0 = o.natW * o.scale;
+    const h0 = o.natH * o.scale;
+    // Anchor = the opposite corner / edge-midpoint that should stay put.
+    const anchors = {
+      NW: { ax: o.x + w0,     ay: o.y + h0 },
+      NE: { ax: o.x,          ay: o.y + h0 },
+      SE: { ax: o.x,          ay: o.y },
+      SW: { ax: o.x + w0,     ay: o.y },
+      N:  { ax: o.x + w0 / 2, ay: o.y + h0 },
+      S:  { ax: o.x + w0 / 2, ay: o.y },
+      E:  { ax: o.x,          ay: o.y + h0 / 2 },
+      W:  { ax: o.x + w0,     ay: o.y + h0 / 2 },
+    };
+    const anc = anchors[handle];
+    if (!anc) return;
+
+    const origCornerX = handle.includes('W') ? o.x : (handle.includes('E') ? o.x + w0 : anc.ax);
+    const origCornerY = handle.includes('N') ? o.y : (handle.includes('S') ? o.y + h0 : anc.ay);
+    const origDX = origCornerX - anc.ax;
+    const origDY = origCornerY - anc.ay;
+    const newDX = world.x - anc.ax;
+    const newDY = world.y - anc.ay;
+
+    let factor;
+    if (handle === 'N' || handle === 'S') factor = Math.abs(origDY) > 1e-3 ? newDY / origDY : 1;
+    else if (handle === 'E' || handle === 'W') factor = Math.abs(origDX) > 1e-3 ? newDX / origDX : 1;
+    else {
+      const fx = Math.abs(origDX) > 1e-3 ? newDX / origDX : 1;
+      const fy = Math.abs(origDY) > 1e-3 ? newDY / origDY : 1;
+      factor = (Math.abs(fx) > Math.abs(fy)) ? fx : fy;
+    }
+    factor = Math.max(0.05, factor);
+
+    cur.scale = o.scale * factor;
+    cur.x = anc.ax - (anc.ax - o.x) * factor;
+    cur.y = anc.ay - (anc.ay - o.y) * factor;
   }
 
   _applyResize(led, handle, world, keepAspect) {
@@ -368,32 +589,13 @@ export class Editor2D extends EventTarget {
 
   _onUp(e) {
     try { this.canvas.releasePointerCapture(e.pointerId); } catch {}
-    if (this._mode === 'marquee') this._finalizeMarquee();
     this._mode = null;
     this._dragLed = null;
     this._dragOrigin = null;
     this._dragStart = null;
-    this._marquee = null;
     this.container.classList.remove('panning');
-    this.container.classList.remove('marquee-active');
     this._updateCursor(this._lastPointer?.px ?? 0, this._lastPointer?.py ?? 0);
     this.render();
-  }
-
-  _finalizeMarquee() {
-    const m = this._marquee;
-    if (!m) return;
-    const dragDist = Math.hypot(m.x1 - m.x0, m.y1 - m.y0);
-    if (dragDist < 3) return; // treat as click, not marquee
-    const mx0 = Math.min(m.x0, m.x1), my0 = Math.min(m.y0, m.y1);
-    const mx1 = Math.max(m.x0, m.x1), my1 = Math.max(m.y0, m.y1);
-    for (const led of this.ledManager.list()) {
-      const b = this._ledAABB(led);
-      const intersects = mx0 < b.x1 && b.x0 < mx1 && my0 < b.y1 && b.y0 < my1;
-      if (!intersects) continue;
-      if (m.additive) this.ledManager.toggleSelection(led.id);
-      else this.ledManager.select(led.id, true);
-    }
   }
 
   _onWheel(e) {
@@ -420,12 +622,15 @@ export class Editor2D extends EventTarget {
       this.dispatchEvent(new CustomEvent('transaction-start', { detail: { kind: 'rotate-90' } }));
       for (const id of this.ledManager.selection) {
         const led = this.ledManager.get(id);
-        if (!led) continue;
+        if (!led || led.locked) continue;
         led.map2d.rotation = (led.map2d.rotation || 0) + Math.PI / 2;
       }
       this.ledManager._emit('change');
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
-      const ids = [...this.ledManager.selection];
+      const ids = [...this.ledManager.selection].filter(id => {
+        const led = this.ledManager.get(id);
+        return led && !led.locked;
+      });
       if (!ids.length) return;
       this.dispatchEvent(new CustomEvent('transaction-start', { detail: { kind: 'delete' } }));
       for (const id of ids) this.ledManager.remove(id);
@@ -436,15 +641,19 @@ export class Editor2D extends EventTarget {
 
   _updateCursor(px, py) {
     const w = this._toWorld(px, py);
-    if (this._tool === 'pan') return; // CSS handles cursor
+    if (this._tool === 'pan') return;
     const hit = this._hitTest(w.x, w.y);
-    if (!hit) { this.canvas.style.cursor = 'crosshair'; return; }
+    if (!hit) {
+      this.canvas.style.cursor = (this._tool === 'mapled') ? 'crosshair' : 'crosshair';
+      return;
+    }
     if (hit.kind === 'rotate') this.canvas.style.cursor = 'crosshair';
-    else if (hit.kind === 'drag') this.canvas.style.cursor = 'move';
-    else if (hit.kind.startsWith('resize-')) {
+    else if (hit.kind === 'drag' || hit.kind === 'mapled-drag') this.canvas.style.cursor = 'move';
+    else if (hit.kind.startsWith('resize-') || hit.kind.startsWith('mapled-resize-')) {
+      const id = hit.kind.replace(/^.*-/, '');
       const map = { N: 'ns-resize', S: 'ns-resize', E: 'ew-resize', W: 'ew-resize',
                     NE: 'nesw-resize', SW: 'nesw-resize', NW: 'nwse-resize', SE: 'nwse-resize' };
-      this.canvas.style.cursor = map[hit.kind.slice(7)] || 'default';
+      this.canvas.style.cursor = map[id] || 'default';
     }
   }
 
@@ -457,6 +666,7 @@ export class Editor2D extends EventTarget {
         return;
       }
       this.render();
+      this._emitMapledChanged();
       this._rafHandle = requestAnimationFrame(tick);
     };
     this._rafHandle = requestAnimationFrame(tick);
@@ -466,9 +676,17 @@ export class Editor2D extends EventTarget {
     this._rafHandle = 0;
   }
 
+  _emitMapledChanged() {
+    if (this._mapledEmitTimer) return;
+    this._mapledEmitTimer = setTimeout(() => {
+      this._mapledEmitTimer = 0;
+      this.dispatchEvent(new CustomEvent('mapled-changed', { detail: { group: this._activeKey() } }));
+    }, 0);
+  }
+
   // ============ Rendering ============
-  _mapledNaturalSize() {
-    const src = this.mapledImage;
+  _mapledNaturalSize(srcArg) {
+    const src = srcArg !== undefined ? srcArg : (this._currentMapled()?.image || null);
     if (!src) return { w: 0, h: 0 };
     if (src instanceof HTMLVideoElement) return { w: src.videoWidth || 1, h: src.videoHeight || 1 };
     return { w: src.naturalWidth || src.width || 1, h: src.naturalHeight || src.height || 1 };
@@ -492,49 +710,43 @@ export class Editor2D extends EventTarget {
       this._renderSetupMode();
     }
 
-    this._drawMarquee();
+    if (this._tool === 'mapled') this._drawMapledHandles();
     ctx.restore();
   }
 
   _renderSetupMode() {
     const ctx = this.ctx;
-    if (this.mapledImage) {
-      const sz = this._mapledNaturalSize();
-      ctx.globalAlpha = this.mapledOpacity;
+    const cur = this._currentMapled();
+    if (cur && cur.image) {
+      const sz = this._mapledNaturalSize(cur.image);
+      ctx.globalAlpha = cur.opacity;
       try {
-        ctx.drawImage(this.mapledImage,
-          this.mapled.x, this.mapled.y,
-          sz.w * this.mapled.scale, sz.h * this.mapled.scale);
+        ctx.drawImage(cur.image, cur.x, cur.y, sz.w * cur.scale, sz.h * cur.scale);
       } catch {}
       ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(56,189,248,0.4)';
+      ctx.strokeStyle = 'rgba(129,172,255,0.4)';
       ctx.lineWidth = 1 / this.viewScale;
-      ctx.strokeRect(this.mapled.x, this.mapled.y,
-        sz.w * this.mapled.scale, sz.h * this.mapled.scale);
+      ctx.strokeRect(cur.x, cur.y, sz.w * cur.scale, sz.h * cur.scale);
     }
     for (const led of this.ledManager.list()) this._drawLed(led, {});
   }
 
   _renderPreviewMode(W, H) {
     const ctx = this.ctx;
-    if (this.mapledImage) {
-      const sz = this._mapledNaturalSize();
+    const cur = this._currentMapled();
+    if (cur && cur.image) {
+      const sz = this._mapledNaturalSize(cur.image);
       try {
-        ctx.drawImage(this.mapledImage,
-          this.mapled.x, this.mapled.y,
-          sz.w * this.mapled.scale, sz.h * this.mapled.scale);
+        ctx.drawImage(cur.image, cur.x, cur.y, sz.w * cur.scale, sz.h * cur.scale);
       } catch {}
     }
 
-    // Optionally mask outside LED rectangles to dark.
     if (this._maskOutside) {
       const path = new Path2D();
-      // Outer cover rect — use the world-visible bounds.
       const x0 = -this.viewTx / this.viewScale;
       const y0 = -this.viewTy / this.viewScale;
       const wW = W / this.viewScale, wH = H / this.viewScale;
       path.rect(x0, y0, wW, wH);
-      // Punch out each LED's rotated rect.
       for (const led of this.ledManager.list()) {
         const cs = this._ledCorners(led);
         path.moveTo(cs[0].x, cs[0].y);
@@ -547,24 +759,40 @@ export class Editor2D extends EventTarget {
       ctx.fill(path, 'evenodd');
     }
 
-    // Draw LEDs as borders only.
     for (const led of this.ledManager.list()) this._drawLed(led, { borderOnly: true });
   }
 
-  _drawMarquee() {
-    if (!this._marquee) return;
+  _drawMapledHandles() {
+    const cur = this._currentMapled();
+    if (!cur || !cur.image) return;
+    const sz = this._mapledNaturalSize(cur.image);
+    const w = sz.w * cur.scale, h = sz.h * cur.scale;
     const ctx = this.ctx;
-    const m = this._marquee;
-    const x = Math.min(m.x0, m.x1), y = Math.min(m.y0, m.y1);
-    const w = Math.abs(m.x1 - m.x0), h = Math.abs(m.y1 - m.y0);
     ctx.save();
-    ctx.fillStyle = 'rgba(14,165,233,0.10)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(14,165,233,0.9)';
-    ctx.lineWidth = 1 / this.viewScale;
-    ctx.setLineDash([6 / this.viewScale, 4 / this.viewScale]);
-    ctx.strokeRect(x, y, w, h);
+    ctx.strokeStyle = '#ea5f28';
+    ctx.lineWidth = 2 / this.viewScale;
+    ctx.setLineDash([8 / this.viewScale, 4 / this.viewScale]);
+    ctx.strokeRect(cur.x, cur.y, w, h);
     ctx.setLineDash([]);
+
+    const pts = [
+      { x: cur.x,         y: cur.y },
+      { x: cur.x + w / 2, y: cur.y },
+      { x: cur.x + w,     y: cur.y },
+      { x: cur.x + w,     y: cur.y + h / 2 },
+      { x: cur.x + w,     y: cur.y + h },
+      { x: cur.x + w / 2, y: cur.y + h },
+      { x: cur.x,         y: cur.y + h },
+      { x: cur.x,         y: cur.y + h / 2 },
+    ];
+    const sz2 = HANDLE / this.viewScale;
+    ctx.fillStyle = '#ea5f28';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5 / this.viewScale;
+    for (const p of pts) {
+      ctx.fillRect(p.x - sz2 / 2, p.y - sz2 / 2, sz2, sz2);
+      ctx.strokeRect(p.x - sz2 / 2, p.y - sz2 / 2, sz2, sz2);
+    }
     ctx.restore();
   }
 
@@ -615,14 +843,20 @@ export class Editor2D extends EventTarget {
     const cx = m.x + m.w / 2;
     const cy = m.y + m.h / 2;
 
+    const inActiveGroup = (this.activeGroup === GROUP_ALL) || ((led.group || '') === this.activeGroup);
+    const dimmed = !inActiveGroup;
+
     ctx.save();
+    if (dimmed) ctx.globalAlpha = 0.35;
     ctx.translate(cx, cy);
     ctx.rotate(m.rotation);
     ctx.translate(-m.w / 2, -m.h / 2);
 
     if (!opts.borderOnly) {
-      // Filled body + pixel grid (Setup mode).
-      ctx.fillStyle = led.color.replace('hsl', 'hsla').replace(')', ', 0.85)');
+      const fill = led.locked
+        ? 'rgba(120, 120, 130, 0.55)'
+        : led.color.replace('hsl', 'hsla').replace(')', ', 0.85)');
+      ctx.fillStyle = fill;
       ctx.fillRect(0, 0, m.w, m.h);
 
       const cellsX = Math.max(2, Math.min(40, Math.round(m.w / 12)));
@@ -641,33 +875,33 @@ export class Editor2D extends EventTarget {
       ctx.stroke();
     }
 
-    // Border (always).
     ctx.strokeStyle = selected
       ? '#ffffff'
       : (opts.borderOnly ? led.color : 'rgba(255,255,255,0.5)');
     ctx.lineWidth = (selected ? 2 : (opts.borderOnly ? 1.5 : 1)) / this.viewScale;
     ctx.strokeRect(0, 0, m.w, m.h);
 
-    // Label.
     const fontSize = Math.max(10, Math.min(16, m.h / 6)) / this.viewScale;
     ctx.fillStyle = opts.borderOnly ? '#ffffff' : 'rgba(255,255,255,0.95)';
-    ctx.font = `600 ${fontSize}px Inter, sans-serif`;
+    ctx.font = `600 ${fontSize}px "Halyard Text", Inter, sans-serif`;
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
     const pad = 6 / this.viewScale;
     if (!opts.borderOnly || m.h > 40 / this.viewScale) {
       ctx.fillText(led.name, pad, pad);
       if (!opts.borderOnly) {
-        ctx.font = `500 ${fontSize * 0.85}px Inter, sans-serif`;
+        ctx.font = `500 ${fontSize * 0.85}px "Halyard Text", Inter, sans-serif`;
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        const info = `${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px`;
+        const info = led.group
+          ? `${led.realW}×${led.realH}mm · ${led.group}`
+          : `${led.realW}×${led.realH}mm · ${led.pixelW}×${led.pixelH}px`;
         ctx.fillText(info, pad, pad + fontSize + 2 / this.viewScale);
       }
     }
 
-    if (selected) {
+    if (selected && !led.locked) {
       const handles = this._handlePositions(m);
-      ctx.fillStyle = '#0ea5e9';
+      ctx.fillStyle = '#ea5f28';
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 1.5 / this.viewScale;
       for (const h of handles) {
@@ -682,6 +916,20 @@ export class Editor2D extends EventTarget {
       ctx.arc(m.w / 2, -ROT_HANDLE_OFFSET, HANDLE / 1.4, 0, Math.PI * 2);
       ctx.fillStyle = '#22c55e';
       ctx.fill(); ctx.stroke();
+    }
+
+    if (led.locked) {
+      const s = Math.max(10, Math.min(18, m.w / 8)) / this.viewScale;
+      const x = m.w - s - 4 / this.viewScale;
+      const y = 4 / this.viewScale;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(x, y, s, s);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = Math.max(1, 1 / this.viewScale);
+      ctx.strokeRect(x + s * 0.20, y + s * 0.42, s * 0.60, s * 0.42);
+      ctx.beginPath();
+      ctx.arc(x + s * 0.50, y + s * 0.42, s * 0.22, Math.PI, 0, false);
+      ctx.stroke();
     }
 
     ctx.restore();
