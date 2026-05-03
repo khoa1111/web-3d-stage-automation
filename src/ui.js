@@ -182,16 +182,33 @@ export class UI {
     for (const groupName of groupNames) {
       const groupLeds = buckets.get(groupName);
       const collapsed = this._collapsedGroups.has(groupName);
+      const isReal = groupName !== '';
+      const allLocked = isReal && this.ledManager.groupAllLocked(groupName);
+      const overlayHidden = isReal && this.editor?.getGroupOverlayHidden?.(groupName);
 
       const header = document.createElement('li');
       header.className = 'led-group-header' + (collapsed ? ' collapsed' : '');
+      // Right-side toggles (lock / overlay / ungroup). Hidden for the "Ungrouped" pseudo-group.
+      const toggles = isReal ? `
+        <button class="grp-btn grp-lock ${allLocked ? 'is-locked' : ''}" title="${escAttr(t(allLocked ? 'group.unlock.title' : 'group.lock.title'))}">
+          ${_lockIcon(allLocked)}
+        </button>
+        <button class="grp-btn grp-overlay ${overlayHidden ? 'is-hidden' : ''}" title="${escAttr(t(overlayHidden ? 'group.overlay.show.title' : 'group.overlay.hide.title'))}">
+          ${_eyeIcon(!overlayHidden)}
+        </button>
+        <button class="grp-btn grp-ungroup" title="${escAttr(t('group.ungroup.title'))}">
+          ${_ungroupIcon()}
+        </button>` : '';
+
       header.innerHTML = `
         <span class="led-group-caret">▾</span>
         <span class="led-group-name">${escHtml(groupName || t('toolbar.activeGroup.ungrouped'))}</span>
         <span class="led-group-count">${groupLeds.length}</span>
+        ${toggles}
       `;
       header.addEventListener('click', (e) => {
-        // Shift/Ctrl+click selects every LED in the group; plain click toggles collapse.
+        // Clicks on toggle buttons are handled below; ignore them here.
+        if (e.target.closest('.grp-btn')) return;
         if (e.shiftKey || e.ctrlKey || e.metaKey) {
           if (e.shiftKey && !(e.ctrlKey || e.metaKey)) this.ledManager.selection.clear();
           for (const led of groupLeds) {
@@ -204,6 +221,33 @@ export class UI {
         else this._collapsedGroups.add(groupName);
         this.renderLedList();
       });
+
+      if (isReal) {
+        const lockBtn = header.querySelector('.grp-lock');
+        lockBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.__app?.undo?.pushSnapshot('group-lock');
+          this.ledManager.setGroupLocked(groupName, !allLocked);
+        });
+
+        const eyeBtn = header.querySelector('.grp-overlay');
+        eyeBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.editor?.setGroupOverlayHidden?.(groupName, !overlayHidden);
+          this.renderLedList();
+        });
+
+        const ugBtn = header.querySelector('.grp-ungroup');
+        ugBtn?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!window.confirm(t('group.ungroup.confirm', { g: groupName }))) return;
+          window.__app?.undo?.pushSnapshot('ungroup');
+          this.ledManager.ungroupGroup(groupName);
+          this.editor?.forgetGroup?.(groupName);
+          const { toast } = window.__app?.utils || {};
+          if (toast) toast(t('toast.ungrouped', { g: groupName }), 'info', 1800);
+        });
+      }
       list.appendChild(header);
 
       if (collapsed) continue;
@@ -461,4 +505,17 @@ function _lockIcon(locked) {
     return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
   }
   return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
+}
+
+function _eyeIcon(visible) {
+  // Lucide eye / eye-off (12px).
+  if (visible) {
+    return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  }
+  return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19c-6.5 0-10-7-10-7a17.6 17.6 0 0 1 3.36-4.42"/><path d="M9.9 4.24A11 11 0 0 1 12 4c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.17 4.18"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="2" y1="2" x2="22" y2="22"/></svg>`;
+}
+
+function _ungroupIcon() {
+  // Lucide users-x style — small "ungroup" hint.
+  return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/><line x1="10" y1="10" x2="14" y2="14"/></svg>`;
 }

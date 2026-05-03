@@ -345,6 +345,46 @@ export class LedManager extends EventTarget {
     }
   }
 
+  // Lock / unlock every LED in a single group.
+  setGroupLocked(name, on) {
+    let any = false;
+    for (const led of this.leds.values()) {
+      if ((led.group || '') !== name) continue;
+      const next = !!on;
+      if (led.locked !== next) {
+        led.locked = next;
+        if (next) this.selection.delete(led.id);
+        any = true;
+      }
+    }
+    if (any) {
+      this._emit('change');
+      this._emit('selection');
+    }
+  }
+
+  // True if every LED in the group is locked (and the group is non-empty).
+  groupAllLocked(name) {
+    let count = 0;
+    for (const led of this.leds.values()) {
+      if ((led.group || '') !== name) continue;
+      if (!led.locked) return false;
+      count++;
+    }
+    return count > 0;
+  }
+
+  // Move every LED out of the named group (group → '').
+  ungroupGroup(name) {
+    if (!name) return 0;
+    let touched = 0;
+    for (const led of this.leds.values()) {
+      if ((led.group || '') === name) { led.group = ''; touched++; }
+    }
+    if (touched) this._emit('change');
+    return touched;
+  }
+
   allLocked() {
     if (!this.leds.size) return false;
     for (const led of this.leds.values()) if (!led.locked) return false;

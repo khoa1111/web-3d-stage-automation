@@ -69,9 +69,33 @@ export class Editor2D extends EventTarget {
   // ============ Per-group mapled accessors ============
   _ensureGroup(name) {
     if (!this._groups.has(name)) {
-      this._groups.set(name, { image: null, x: 60, y: 60, scale: 1, opacity: 0.6 });
+      this._groups.set(name, { image: null, x: 60, y: 60, scale: 1, opacity: 0.6, overlayHidden: false });
     }
     return this._groups.get(name);
+  }
+
+  // Iterate (groupName, state) pairs for every group that has any state.
+  groupsWithState() { return [...this._groups.entries()]; }
+
+  // Drop a group's mapled state (used when un-grouping or removing the group).
+  forgetGroup(name) {
+    const g = this._groups.get(name);
+    if (!g) return;
+    if (g.image instanceof HTMLVideoElement) {
+      try { g.image.pause(); } catch {}
+    }
+    this._groups.delete(name);
+    this.dispatchEvent(new CustomEvent('mapled-changed', { detail: { group: name } }));
+  }
+
+  // Per-group overlay visibility for the 3D mapled overlay.
+  setGroupOverlayHidden(name, hidden) {
+    const g = this._ensureGroup(name);
+    g.overlayHidden = !!hidden;
+    this.dispatchEvent(new CustomEvent('group-overlay-toggled', { detail: { group: name, hidden: g.overlayHidden } }));
+  }
+  getGroupOverlayHidden(name) {
+    return !!this._groups.get(name)?.overlayHidden;
   }
   _currentMapled() {
     if (this.activeGroup === GROUP_ALL) return null;
@@ -599,7 +623,6 @@ export class Editor2D extends EventTarget {
   }
 
   _onWheel(e) {
-    if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.1 : 0.9;
     const rect = this.canvas.getBoundingClientRect();

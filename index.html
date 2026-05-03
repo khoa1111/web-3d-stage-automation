@@ -64,12 +64,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         <span data-i18n="topbar.open">Projects</span>
       </button>
-
-      <div class="divider"></div>
-      <button id="btn-lang" class="btn btn-ghost btn-lang" data-i18n-title="topbar.lang.title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span id="btn-lang-label">VI</span>
-      </button>
+      <input id="file-project" type="file" accept="application/json,.json" hidden />
     </div>
   </header>
 
@@ -256,6 +251,10 @@
     <span class="spacer"></span>
     <span id="status-mode">Mode: 3D</span>
     <span id="status-fps">— FPS</span>
+    <button id="btn-lang" class="status-lang" data-i18n-title="topbar.lang.title" aria-label="Switch language">
+      <span class="status-lang-opt is-active" id="lang-opt-vi">VI</span>
+      <span class="status-lang-opt" id="lang-opt-en">EN</span>
+    </button>
   </footer>
 
   <div id="toast-host" class="toast-host"></div>
