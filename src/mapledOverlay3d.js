@@ -143,26 +143,33 @@ export class MapledOverlay3D {
   }
 
   // Draw src (image or video) onto ctx, masked to the union of LED rects.
+  // Order matters: build the rect union first (default source-over accumulates
+  // each fillRect into one shape), then stamp the image once with source-in.
+  // Doing it the other way — destination-in inside the loop — would intersect
+  // surviving pixels with each rect in turn, and non-overlapping LEDs would
+  // collapse to an empty canvas (the "disappear" bug).
   _drawMasked(ctx, sz, src, cur, leds) {
     ctx.clearRect(0, 0, sz.w, sz.h);
 
-    // 1. Draw the full image / current video frame.
+    // 1. Build the LED-rect mask as opaque white.
     ctx.globalCompositeOperation = 'source-over';
-    try { ctx.drawImage(src, 0, 0, sz.w, sz.h); } catch {}
-
-    // 2. Punch out everything outside LED rects using destination-in:
-    //    existing pixels survive only where we draw a solid rect.
-    ctx.globalCompositeOperation = 'destination-in';
     ctx.fillStyle = '#fff';
+    let any = false;
     for (const led of leds) {
       if (!led.map2d || led.map2d.w <= 0 || led.map2d.h <= 0) continue;
       // Convert canvas coordinates → image pixel coordinates.
       const x = (led.map2d.x - cur.x) / cur.scale;
       const y = (led.map2d.y - cur.y) / cur.scale;
-      const w = led.map2d.w  / cur.scale;
-      const h = led.map2d.h  / cur.scale;
+      const w =  led.map2d.w        / cur.scale;
+      const h =  led.map2d.h        / cur.scale;
       ctx.fillRect(x, y, w, h);
+      any = true;
     }
+    if (!any) return;
+
+    // 2. Stamp the image only where the mask is opaque.
+    ctx.globalCompositeOperation = 'source-in';
+    try { ctx.drawImage(src, 0, 0, sz.w, sz.h); } catch {}
 
     ctx.globalCompositeOperation = 'source-over';
   }
