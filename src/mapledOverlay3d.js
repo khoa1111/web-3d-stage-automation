@@ -1,30 +1,30 @@
-// 3D mapled overlay — projects each LED group's mapled image/video onto its
-// 3D LED panel face.
+// 3D mapled overlay — Option 2.
 //
-// For each visible LED, we build a Plane mesh, parent it to the LED mesh
-// (so it inherits world position / rotation / scale automatically) and use
-// the LED's *local* geometry bounding box to figure out:
-//   - face dimensions (the two largest local-axis sizes)
-//   - thin axis (the smallest local-axis = panel normal direction)
-//   - offset along thin axis = half-thickness + Z_OFFSET
+// Per LED group, build ONE textured plane in 3D containing the FULL mapled
+// image (or video). The plane is positioned and oriented so that the 2D
+// canvas layout maps correctly onto the 3D wall:
 //
-// UV crop comes from the LED's `map2d` rect normalized by the mapled's natural
-// pixel dimensions. Texture rotation handles per-LED 2D rotation.
+//   - Pick a reference LED in the group; use its local geometry bbox to find
+//     the panel's "wide", "tall" and "thin" local axes.
+//   - The reference LED's mesh world quaternion gives us the wall's basis
+//     vectors (worldU = canvas-X direction, worldV = canvas-Y-up direction,
+//     worldN = panel normal).
+//   - Convert "world units per canvas pixel" from realW/canvasW (and realH/H).
+//   - The mapled image's centre in canvas → in world via that mapping anchored
+//     at the reference LED's world centre.
 //
-// Each per-LED plane uses its own cloned texture so offset/repeat/center/rot
-// are independent across LEDs that share the same group's mapled bitmap.
+// When a group's overlay is visible, the LED meshes in that group are HIDDEN
+// (they'd otherwise just block the image). Toggling the overlay off restores
+// them.
 //
 // Subscriptions:
 //   - editor 'mapled-changed'        → refresh()
 //   - editor 'group-changed'         → refresh()
-//   - editor 'overlay-3d-toggled'    → enable/disable, refresh()
-//   - editor 'group-overlay-toggled' → refresh() (per-group visibility)
-//   - ledManager 'change'            → refresh() (LED moved → plane moves)
+//   - editor 'overlay-3d-toggled'    → enable / disable globally
+//   - editor 'group-overlay-toggled' → per-group visibility
+//   - ledManager 'change'            → LEDs added / moved / locked → refresh()
 
 import * as THREE from 'three';
-
-const Z_OFFSET = 0.0015; // ≈ 1.5 mm in scene units (meters)
-const _v = new THREE.Vector3();
 
 export class MapledOverlay3D {
   constructor(scene, ledManager, editor) {
@@ -32,17 +32,15 @@ export class MapledOverlay3D {
     this.ledManager = ledManager;
     this.editor = editor;
 
-    // We still keep a holder group for stale planes that haven't been parented
-    // to an LED yet; parented planes live under their LED mesh.
     this.group = new THREE.Group();
     this.group.name = 'MapledOverlay3D';
     this.scene.add(this.group);
 
-    this._meshes = new Map();        // ledId → Mesh
-    this._textures = new Map();      // groupName → THREE.Texture
-    this._sources = new Map();       // groupName → image|video reference
+    this._planes = new Map();         // groupName → THREE.Mesh (one big plane per group)
+    this._textures = new Map();       // groupName → THREE.Texture
+    this._sources = new Map();        // groupName → image|video reference
+    this._hiddenMeshes = new Set();   // LED meshes we've turned invisible
 
-    this._visible = true;
     this._enabled = editor.getOverlay3dEnabled?.() ?? true;
 
     this._onMapledChanged = () => this.refresh();
@@ -61,26 +59,29 @@ export class MapledOverlay3D {
     ledManager.addEventListener('change', this._onLedChanged);
   }
 
-  setVisible(on) {
-    this._visible = !!on;
-    this.refresh();
-  }
+  setVisible(on) { this._enabled = !!on; this.refresh(); }
 
   refresh() {
-    if (!this._enabled || !this._visible) {
-      // Hide all planes without disposing them.
-      for (const mesh of this._meshes.values()) mesh.visible = false;
+    // Restore LEDs we previously hid; we'll re-hide as needed below.
+    this._restoreLedVisibility();
+
+    if (!this._enabled) {
+      for (const m of this._planes.values()) m.visible = false;
       return;
     }
 
-    // Show overlays for every group that has a mapled — independent of which
-    // group is currently active in the 2D editor. (Active group is just for
-    // editing; the 3D view shows the full assembled stage.)
-    const seenIds = new Set();
-
+    // Bucket LEDs by group.
+    const buckets = new Map();
     for (const led of this.ledManager.list()) {
-      if (!led._mesh || led.hidden) continue;
-      const groupName = led.group || '';
+      if (!led._mesh) continue;
+      const g = led.group || '';
+      if (!buckets.has(g)) buckets.set(g, []);
+      buckets.get(g).push(led);
+    }
+
+    const activeGroups = new Set();
+
+    for (const [groupName, leds] of buckets) {
       const cur = this.editor._groups?.get(groupName);
       if (!cur || !cur.image || cur.overlayHidden) continue;
 
@@ -90,52 +91,130 @@ export class MapledOverlay3D {
       const sz = this._mapledSize(cur.image);
       if (!sz.w || !sz.h) continue;
 
-      const mapledW = sz.w * cur.scale;
-      const mapledH = sz.h * cur.scale;
-      const m = led.map2d;
-      const u0 = (m.x - cur.x) / mapledW;
-      const v0 = (m.y - cur.y) / mapledH;
-      const uw = m.w / mapledW;
-      const vh = m.h / mapledH;
+      const placement = this._computeGroupPlacement(leds, cur, sz);
+      if (!placement) continue;
 
-      const mesh = this._ensureMesh(led, tex);
+      const mesh = this._ensurePlane(groupName, tex);
       mesh.visible = true;
-      const material = mesh.material;
+      mesh.scale.set(placement.width, placement.height, 1);
+      mesh.position.copy(placement.position);
+      mesh.quaternion.copy(placement.quaternion);
 
-      let perLedTex = mesh.userData._perLedTex;
-      if (!perLedTex || perLedTex._sourceTex !== tex) {
-        if (perLedTex) perLedTex.dispose();
-        perLedTex = tex.clone();
-        perLedTex._sourceTex = tex;
-        perLedTex.needsUpdate = true;
-        material.map = perLedTex;
-        material.needsUpdate = true;
-        mesh.userData._perLedTex = perLedTex;
+      // Auto-hide every LED panel in this group while its overlay is showing.
+      for (const led of leds) {
+        if (led._mesh && led._mesh.visible) {
+          led._mesh.visible = false;
+          this._hiddenMeshes.add(led._mesh);
+        }
       }
-      perLedTex.wrapS = THREE.ClampToEdgeWrapping;
-      perLedTex.wrapT = THREE.ClampToEdgeWrapping;
-      // Three.js V grows up; canvas/image V grows down → flip.
-      perLedTex.offset.set(u0, 1 - (v0 + vh));
-      perLedTex.repeat.set(uw, vh);
-      perLedTex.center.set(u0 + uw / 2, 1 - (v0 + vh / 2));
-      perLedTex.rotation = -(m.rotation || 0);
-
-      this._positionPlaneAtLed(mesh, led);
-
-      seenIds.add(led.id);
+      activeGroups.add(groupName);
     }
 
-    // Hide / dispose planes whose LEDs no longer qualify.
-    for (const [id, mesh] of this._meshes) {
-      if (!seenIds.has(id)) {
-        this._disposeMesh(mesh);
-        this._meshes.delete(id);
-      }
+    for (const [name, mesh] of this._planes) {
+      if (!activeGroups.has(name)) mesh.visible = false;
     }
   }
 
-  _ensureMesh(led, tex) {
-    let mesh = this._meshes.get(led.id);
+  // ---------- Internal ----------
+
+  _restoreLedVisibility() {
+    for (const mesh of this._hiddenMeshes) mesh.visible = true;
+    this._hiddenMeshes.clear();
+  }
+
+  // Decide where the group's full-image plane sits in world space.
+  _computeGroupPlacement(leds, cur, sz) {
+    const refLed = leds.find(l => l._mesh && l.map2d.w > 0 && l.map2d.h > 0);
+    if (!refLed) return null;
+    const refMesh = refLed._mesh;
+    refMesh.updateWorldMatrix(true, false);
+
+    if (!refMesh.geometry?.boundingBox) refMesh.geometry?.computeBoundingBox?.();
+    const lbox = refMesh.geometry?.boundingBox;
+    if (!lbox) return null;
+    const lsize = lbox.getSize(new THREE.Vector3());
+    const lcenter = lbox.getCenter(new THREE.Vector3());
+
+    // World transform of the reference LED.
+    const wq = new THREE.Quaternion();
+    const wp = new THREE.Vector3();
+    const ws = new THREE.Vector3();
+    refMesh.matrixWorld.decompose(wp, wq, ws);
+
+    // Sort local axes by size; smallest = panel normal (thin).
+    const axes = [
+      { ax: 'x', val: lsize.x, vec: new THREE.Vector3(1, 0, 0) },
+      { ax: 'y', val: lsize.y, vec: new THREE.Vector3(0, 1, 0) },
+      { ax: 'z', val: lsize.z, vec: new THREE.Vector3(0, 0, 1) },
+    ].sort((a, b) => a.val - b.val);
+    const thin = axes[0];
+    // Of the remaining two in-plane axes, pick the one whose world direction has
+    // the largest |Y| component as "tall" (vertical-on-wall). This disambiguates
+    // square panels and matches the natural "up on the wall" intuition.
+    const inPlane = [axes[1], axes[2]].map(a => ({
+      ...a,
+      worldY: Math.abs(a.vec.clone().applyQuaternion(wq).y),
+    }));
+    inPlane.sort((a, b) => b.worldY - a.worldY);
+    const tall = inPlane[0];
+    const wide = inPlane[1];
+
+    // World-units across the LED's panel face.
+    const wsArr = [ws.x, ws.y, ws.z];
+    const idx = (a) => a === 'x' ? 0 : (a === 'y' ? 1 : 2);
+    const ledFaceW_world = wide.val * Math.abs(wsArr[idx(wide.ax)]);
+    const ledFaceH_world = tall.val * Math.abs(wsArr[idx(tall.ax)]);
+
+    // Canvas-pixel size of the reference LED's 2D rect.
+    const cw = refLed.map2d.w;
+    const ch = refLed.map2d.h;
+    if (cw <= 0 || ch <= 0) return null;
+
+    // World-units per canvas-pixel along each axis. We allow non-uniform mapping
+    // so that LEDs whose 2D aspect doesn't match their physical aspect still
+    // produce a sensible image scale.
+    const wppX = ledFaceW_world / cw;
+    const wppY = ledFaceH_world / ch;
+
+    // World basis vectors derived from the LED's local axes.
+    const worldU = wide.vec.clone().applyQuaternion(wq).normalize();
+    const worldV = tall.vec.clone().applyQuaternion(wq).normalize();
+    const worldN = thin.vec.clone().applyQuaternion(wq).normalize();
+
+    // Reference LED's centre in world.
+    const refWorldCenter = lcenter.clone().applyMatrix4(refMesh.matrixWorld);
+
+    // Where the mapled image's centre sits in canvas-px.
+    const mapledCxC = cur.x + sz.w * cur.scale / 2;
+    const mapledCyC = cur.y + sz.h * cur.scale / 2;
+    const refCxC = refLed.map2d.x + cw / 2;
+    const refCyC = refLed.map2d.y + ch / 2;
+
+    const dxC = mapledCxC - refCxC;
+    const dyC = mapledCyC - refCyC;
+
+    // Canvas X grows right (= +worldU). Canvas Y grows down (= -worldV).
+    const offset = worldU.clone().multiplyScalar(dxC * wppX)
+      .add(worldV.clone().multiplyScalar(-dyC * wppY));
+
+    const planePos = refWorldCenter.clone().add(offset);
+    // Pull slightly forward along the normal so we don't z-fight other geometry.
+    planePos.add(worldN.clone().multiplyScalar(0.002));
+
+    // Plane orientation: +X→worldU, +Y→worldV, +Z→worldN.
+    const m = new THREE.Matrix4().makeBasis(worldU, worldV, worldN);
+    const planeQuat = new THREE.Quaternion().setFromRotationMatrix(m);
+
+    return {
+      width:  sz.w * cur.scale * wppX,
+      height: sz.h * cur.scale * wppY,
+      position: planePos,
+      quaternion: planeQuat,
+    };
+  }
+
+  _ensurePlane(groupName, tex) {
+    let mesh = this._planes.get(groupName);
     if (!mesh) {
       const geom = new THREE.PlaneGeometry(1, 1);
       const mat = new THREE.MeshBasicMaterial({
@@ -146,53 +225,15 @@ export class MapledOverlay3D {
         toneMapped: false,
       });
       mesh = new THREE.Mesh(geom, mat);
-      mesh.name = `MapledOverlay_${led.id}`;
+      mesh.name = `MapledOverlay_${groupName || 'ungrouped'}`;
       mesh.renderOrder = 1000;
-      this._meshes.set(led.id, mesh);
-    }
-    // Re-parent under the LED mesh so it inherits world transforms.
-    if (mesh.parent !== led._mesh) {
-      if (mesh.parent) mesh.parent.remove(mesh);
-      led._mesh.add(mesh);
+      this.group.add(mesh);
+      this._planes.set(groupName, mesh);
+    } else if (mesh.material.map !== tex) {
+      mesh.material.map = tex;
+      mesh.material.needsUpdate = true;
     }
     return mesh;
-  }
-
-  // Position the overlay plane in the LED mesh's *local* space, so any rotation
-  // / translation / scale on the LED mesh is inherited automatically.
-  _positionPlaneAtLed(mesh, led) {
-    const ledMesh = led._mesh;
-    if (!ledMesh) return;
-
-    if (!ledMesh.geometry?.boundingBox) ledMesh.geometry?.computeBoundingBox?.();
-    const lbox = ledMesh.geometry?.boundingBox;
-    if (!lbox) return;
-    const lsize = lbox.getSize(new THREE.Vector3());
-    const lcenter = lbox.getCenter(new THREE.Vector3());
-
-    const axes = [
-      { ax: 'x', val: lsize.x },
-      { ax: 'y', val: lsize.y },
-      { ax: 'z', val: lsize.z },
-    ].sort((a, b) => a.val - b.val);
-    const thin = axes[0];
-    const faceW = axes[2].val;
-    const faceH = axes[1].val;
-
-    mesh.scale.set(faceW, faceH, 1);
-    mesh.rotation.set(0, 0, 0);
-    mesh.position.copy(lcenter);
-
-    const offset = thin.val / 2 + Z_OFFSET;
-    if (thin.ax === 'z') {
-      mesh.position.z += offset;
-    } else if (thin.ax === 'x') {
-      mesh.rotation.y = Math.PI / 2;
-      mesh.position.x += offset;
-    } else {
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.y += offset;
-    }
   }
 
   _ensureTexture(groupName, src) {
@@ -232,9 +273,8 @@ export class MapledOverlay3D {
     return { w: src.naturalWidth || src.width || 1, h: src.naturalHeight || src.height || 1 };
   }
 
-  _disposeMesh(mesh) {
+  _disposePlane(mesh) {
     if (mesh.parent) mesh.parent.remove(mesh);
-    if (mesh.userData._perLedTex) mesh.userData._perLedTex.dispose();
     mesh.geometry?.dispose?.();
     mesh.material?.dispose?.();
   }
@@ -246,8 +286,9 @@ export class MapledOverlay3D {
     this.editor.removeEventListener('group-overlay-toggled', this._onGroupOverlayToggled);
     this.ledManager.removeEventListener('change', this._onLedChanged);
 
-    for (const mesh of this._meshes.values()) this._disposeMesh(mesh);
-    this._meshes.clear();
+    this._restoreLedVisibility();
+    for (const mesh of this._planes.values()) this._disposePlane(mesh);
+    this._planes.clear();
     for (const tex of this._textures.values()) tex.dispose();
     this._textures.clear();
     this._sources.clear();
