@@ -1,21 +1,17 @@
-// 3D mapled overlay — Option 2.
+// 3D mapled overlay — Option 2 with LED masking.
 //
 // Per LED group, build ONE textured plane in 3D containing the FULL mapled
-// image (or video). The plane is positioned and oriented so that the 2D
-// canvas layout maps correctly onto the 3D wall:
+// image (or video). The texture is rendered to an offscreen canvas and masked
+// with the union of LED rectangles from 2D mapping, so only the pixels that
+// "belong" to an LED panel are visible; everything between panels is transparent.
 //
-//   - Pick a reference LED in the group; use its local geometry bbox to find
-//     the panel's "wide", "tall" and "thin" local axes.
-//   - The reference LED's mesh world quaternion gives us the wall's basis
-//     vectors (worldU = canvas-X direction, worldV = canvas-Y-up direction,
-//     worldN = panel normal).
-//   - Convert "world units per canvas pixel" from realW/canvasW (and realH/H).
-//   - The mapled image's centre in canvas → in world via that mapping anchored
-//     at the reference LED's world centre.
+// Masking technique (Canvas 2D):
+//   1. drawImage(src) with source-over
+//   2. destination-in + fillRect(ledRect) for every LED in the group
+//      → keeps image pixels only inside the LED rects, clears the rest
 //
-// When a group's overlay is visible, the LED meshes in that group are HIDDEN
-// (they'd otherwise just block the image). Toggling the overlay off restores
-// them.
+// For video sources the mask is redrawn every animation frame so the video
+// plays through correctly. For static images it is drawn once (on refresh).
 //
 // Subscriptions:
 //   - editor 'mapled-changed'        → refresh()
@@ -36,34 +32,32 @@ export class MapledOverlay3D {
     this.group.name = 'MapledOverlay3D';
     this.scene.add(this.group);
 
-    this._planes = new Map();         // groupName → THREE.Mesh (one big plane per group)
-    this._textures = new Map();       // groupName → THREE.Texture
-    this._sources = new Map();        // groupName → image|video reference
-    this._hiddenMeshes = new Set();   // LED meshes we've turned invisible
+    this._planes      = new Map();  // groupName → THREE.Mesh
+    this._textures    = new Map();  // groupName → THREE.CanvasTexture
+    this._maskCanvas  = new Map();  // groupName → { canvas, ctx, w, h }
+    this._videoLoops  = new Map();  // groupName → rafId
+    this._hiddenMeshes = new Set();
 
     this._enabled = editor.getOverlay3dEnabled?.() ?? true;
 
-    this._onMapledChanged = () => this.refresh();
-    this._onGroupChanged = () => this.refresh();
-    this._onLedChanged = () => this.refresh();
+    this._onMapledChanged      = () => this.refresh();
+    this._onGroupChanged       = () => this.refresh();
+    this._onLedChanged         = () => this.refresh();
     this._onGroupOverlayToggled = () => this.refresh();
-    this._onOverlayToggled = (e) => {
-      this._enabled = !!e.detail;
-      this.refresh();
-    };
+    this._onOverlayToggled     = (e) => { this._enabled = !!e.detail; this.refresh(); };
 
-    editor.addEventListener('mapled-changed', this._onMapledChanged);
-    editor.addEventListener('group-changed', this._onGroupChanged);
-    editor.addEventListener('overlay-3d-toggled', this._onOverlayToggled);
+    editor.addEventListener('mapled-changed',        this._onMapledChanged);
+    editor.addEventListener('group-changed',         this._onGroupChanged);
+    editor.addEventListener('overlay-3d-toggled',    this._onOverlayToggled);
     editor.addEventListener('group-overlay-toggled', this._onGroupOverlayToggled);
-    ledManager.addEventListener('change', this._onLedChanged);
+    ledManager.addEventListener('change',            this._onLedChanged);
   }
 
   setVisible(on) { this._enabled = !!on; this.refresh(); }
 
   refresh() {
-    // Restore LEDs we previously hid; we'll re-hide as needed below.
     this._restoreLedVisibility();
+    this._stopAllVideoLoops();
 
     if (!this._enabled) {
       for (const m of this._planes.values()) m.visible = false;
@@ -85,14 +79,14 @@ export class MapledOverlay3D {
       const cur = this.editor._groups?.get(groupName);
       if (!cur || !cur.image || cur.overlayHidden) continue;
 
-      const tex = this._ensureTexture(groupName, cur.image);
-      if (!tex) continue;
-
       const sz = this._mapledSize(cur.image);
       if (!sz.w || !sz.h) continue;
 
       const placement = this._computeGroupPlacement(leds, cur, sz);
       if (!placement) continue;
+
+      const tex = this._buildMaskedTexture(groupName, cur, sz, leds);
+      if (!tex) continue;
 
       const mesh = this._ensurePlane(groupName, tex);
       mesh.visible = true;
@@ -108,11 +102,94 @@ export class MapledOverlay3D {
         }
       }
       activeGroups.add(groupName);
+
+      // Keep video textures live.
+      if (cur.image instanceof HTMLVideoElement) {
+        this._startVideoLoop(groupName, cur.image, cur, sz, leds);
+      }
     }
 
     for (const [name, mesh] of this._planes) {
       if (!activeGroups.has(name)) mesh.visible = false;
     }
+  }
+
+  // ---------- Masked texture ----------
+
+  _buildMaskedTexture(groupName, cur, sz, leds) {
+    // Get or (re)create offscreen canvas when image size changes.
+    let entry = this._maskCanvas.get(groupName);
+    if (!entry || entry.w !== sz.w || entry.h !== sz.h) {
+      const canvas = document.createElement('canvas');
+      canvas.width  = sz.w;
+      canvas.height = sz.h;
+      entry = { canvas, ctx: canvas.getContext('2d'), w: sz.w, h: sz.h };
+      this._maskCanvas.set(groupName, entry);
+      // Old texture (wrong size) must be disposed.
+      const old = this._textures.get(groupName);
+      if (old) { old.dispose(); this._textures.delete(groupName); }
+    }
+
+    this._drawMasked(entry.ctx, sz, cur.image, cur, leds);
+
+    let tex = this._textures.get(groupName);
+    if (!tex) {
+      tex = new THREE.CanvasTexture(entry.canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      this._textures.set(groupName, tex);
+    }
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // Draw src (image or video) onto ctx, masked to the union of LED rects.
+  _drawMasked(ctx, sz, src, cur, leds) {
+    ctx.clearRect(0, 0, sz.w, sz.h);
+
+    // 1. Draw the full image / current video frame.
+    ctx.globalCompositeOperation = 'source-over';
+    try { ctx.drawImage(src, 0, 0, sz.w, sz.h); } catch {}
+
+    // 2. Punch out everything outside LED rects using destination-in:
+    //    existing pixels survive only where we draw a solid rect.
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = '#fff';
+    for (const led of leds) {
+      if (!led.map2d || led.map2d.w <= 0 || led.map2d.h <= 0) continue;
+      // Convert canvas coordinates → image pixel coordinates.
+      const x = (led.map2d.x - cur.x) / cur.scale;
+      const y = (led.map2d.y - cur.y) / cur.scale;
+      const w = led.map2d.w  / cur.scale;
+      const h = led.map2d.h  / cur.scale;
+      ctx.fillRect(x, y, w, h);
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // rAF loop that redraws the masked canvas every frame for video sources.
+  _startVideoLoop(groupName, video, cur, sz, leds) {
+    const entry = this._maskCanvas.get(groupName);
+    const tex   = this._textures.get(groupName);
+    if (!entry || !tex) return;
+
+    const { ctx } = entry;
+    const loop = () => {
+      this._drawMasked(ctx, sz, video, cur, leds);
+      tex.needsUpdate = true;
+      this._videoLoops.set(groupName, requestAnimationFrame(loop));
+    };
+    this._videoLoops.set(groupName, requestAnimationFrame(loop));
+  }
+
+  _stopVideoLoop(groupName) {
+    const id = this._videoLoops.get(groupName);
+    if (id != null) cancelAnimationFrame(id);
+    this._videoLoops.delete(groupName);
+  }
+
+  _stopAllVideoLoops() {
+    for (const name of [...this._videoLoops.keys()]) this._stopVideoLoop(name);
   }
 
   // ---------- Internal ----------
@@ -132,7 +209,7 @@ export class MapledOverlay3D {
     if (!refMesh.geometry?.boundingBox) refMesh.geometry?.computeBoundingBox?.();
     const lbox = refMesh.geometry?.boundingBox;
     if (!lbox) return null;
-    const lsize = lbox.getSize(new THREE.Vector3());
+    const lsize  = lbox.getSize(new THREE.Vector3());
     const lcenter = lbox.getCenter(new THREE.Vector3());
 
     // World transform of the reference LED.
@@ -149,8 +226,7 @@ export class MapledOverlay3D {
     ].sort((a, b) => a.val - b.val);
     const thin = axes[0];
     // Of the remaining two in-plane axes, pick the one whose world direction has
-    // the largest |Y| component as "tall" (vertical-on-wall). This disambiguates
-    // square panels and matches the natural "up on the wall" intuition.
+    // the largest |Y| component as "tall" (vertical-on-wall).
     const inPlane = [axes[1], axes[2]].map(a => ({
       ...a,
       worldY: Math.abs(a.vec.clone().applyQuaternion(wq).y),
@@ -170,25 +246,23 @@ export class MapledOverlay3D {
     const ch = refLed.map2d.h;
     if (cw <= 0 || ch <= 0) return null;
 
-    // World-units per canvas-pixel along each axis. We allow non-uniform mapping
-    // so that LEDs whose 2D aspect doesn't match their physical aspect still
-    // produce a sensible image scale.
+    // World-units per canvas-pixel.
     const wppX = ledFaceW_world / cw;
     const wppY = ledFaceH_world / ch;
 
-    // World basis vectors derived from the LED's local axes.
+    // World basis vectors.
     const worldU = wide.vec.clone().applyQuaternion(wq).normalize();
     const worldV = tall.vec.clone().applyQuaternion(wq).normalize();
     const worldN = thin.vec.clone().applyQuaternion(wq).normalize();
 
-    // Reference LED's centre in world.
+    // Reference LED centre in world.
     const refWorldCenter = lcenter.clone().applyMatrix4(refMesh.matrixWorld);
 
-    // Where the mapled image's centre sits in canvas-px.
+    // Mapled image centre in canvas-px.
     const mapledCxC = cur.x + sz.w * cur.scale / 2;
     const mapledCyC = cur.y + sz.h * cur.scale / 2;
-    const refCxC = refLed.map2d.x + cw / 2;
-    const refCyC = refLed.map2d.y + ch / 2;
+    const refCxC    = refLed.map2d.x + cw / 2;
+    const refCyC    = refLed.map2d.y + ch / 2;
 
     const dxC = mapledCxC - refCxC;
     const dyC = mapledCyC - refCyC;
@@ -198,17 +272,15 @@ export class MapledOverlay3D {
       .add(worldV.clone().multiplyScalar(-dyC * wppY));
 
     const planePos = refWorldCenter.clone().add(offset);
-    // Pull slightly forward along the normal so we don't z-fight other geometry.
     planePos.add(worldN.clone().multiplyScalar(0.002));
 
-    // Plane orientation: +X→worldU, +Y→worldV, +Z→worldN.
     const m = new THREE.Matrix4().makeBasis(worldU, worldV, worldN);
     const planeQuat = new THREE.Quaternion().setFromRotationMatrix(m);
 
     return {
-      width:  sz.w * cur.scale * wppX,
-      height: sz.h * cur.scale * wppY,
-      position: planePos,
+      width:     sz.w * cur.scale * wppX,
+      height:    sz.h * cur.scale * wppY,
+      position:  planePos,
       quaternion: planeQuat,
     };
   }
@@ -236,37 +308,6 @@ export class MapledOverlay3D {
     return mesh;
   }
 
-  _ensureTexture(groupName, src) {
-    const cached = this._textures.get(groupName);
-    if (cached && this._sources.get(groupName) === src) {
-      if (cached.isVideoTexture) cached.needsUpdate = true;
-      return cached;
-    }
-    if (cached) cached.dispose();
-
-    let tex = null;
-    if (src instanceof HTMLVideoElement) {
-      tex = new THREE.VideoTexture(src);
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.format = THREE.RGBAFormat;
-    } else if (src instanceof HTMLImageElement) {
-      const canvas = document.createElement('canvas');
-      canvas.width = src.naturalWidth || src.width || 1;
-      canvas.height = src.naturalHeight || src.height || 1;
-      const ctx = canvas.getContext('2d');
-      try { ctx.drawImage(src, 0, 0); } catch {}
-      tex = new THREE.CanvasTexture(canvas);
-    }
-    if (tex) {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
-      this._textures.set(groupName, tex);
-      this._sources.set(groupName, src);
-    }
-    return tex;
-  }
-
   _mapledSize(src) {
     if (!src) return { w: 0, h: 0 };
     if (src instanceof HTMLVideoElement) return { w: src.videoWidth || 1, h: src.videoHeight || 1 };
@@ -280,18 +321,19 @@ export class MapledOverlay3D {
   }
 
   dispose() {
-    this.editor.removeEventListener('mapled-changed', this._onMapledChanged);
-    this.editor.removeEventListener('group-changed', this._onGroupChanged);
-    this.editor.removeEventListener('overlay-3d-toggled', this._onOverlayToggled);
+    this.editor.removeEventListener('mapled-changed',        this._onMapledChanged);
+    this.editor.removeEventListener('group-changed',         this._onGroupChanged);
+    this.editor.removeEventListener('overlay-3d-toggled',    this._onOverlayToggled);
     this.editor.removeEventListener('group-overlay-toggled', this._onGroupOverlayToggled);
-    this.ledManager.removeEventListener('change', this._onLedChanged);
+    this.ledManager.removeEventListener('change',            this._onLedChanged);
 
+    this._stopAllVideoLoops();
     this._restoreLedVisibility();
     for (const mesh of this._planes.values()) this._disposePlane(mesh);
     this._planes.clear();
     for (const tex of this._textures.values()) tex.dispose();
     this._textures.clear();
-    this._sources.clear();
+    this._maskCanvas.clear();
     this.scene.remove(this.group);
   }
 }
