@@ -54,18 +54,68 @@ export class Viewer3D extends EventTarget {
     this._loop = this._loop.bind(this);
     this._lastFrame = performance.now();
     this._fpsAccum = 0; this._fpsCount = 0; this._fps = 0;
-    requestAnimationFrame(this._loop);
 
-    // React to selection changes coming from elsewhere (e.g., the LED list).
-    ledManager.on('selection', () => this._refreshSelectionVisuals());
-    ledManager.on('change', () => this._refreshSelectionVisuals());
+    // Render-loop control. The loop is rAF-based but only kept alive while the
+    // 3D view is visible OR a video texture is animating; otherwise we render
+    // on demand (camera moves, LED changes). Saves ~16ms/frame in 2D mode.
+    this._active = true;
+    this._rafId = 0;
+    this._needsRender = true;
+    this._videoTextures = new Set();
+    this._kickLoop();
+
+    // OrbitControls fires 'change' on every camera tweak — request one frame.
+    this.controls.addEventListener('change', () => this._needsRender = true);
+
+    ledManager.on('selection', () => { this._refreshSelectionVisuals(); this._needsRender = true; });
+    ledManager.on('change',    () => { this._refreshSelectionVisuals(); this._needsRender = true; });
+  }
+
+  // Pause / resume the render loop. Called by main.js when switching to 2D.
+  setActive(on) {
+    const was = this._active;
+    this._active = !!on;
+    if (this._active && !was) {
+      this._needsRender = true;
+      this._kickLoop();
+    }
+    // When inactive we let the running loop drain; it stops itself once the
+    // queued frame is rendered (see _loop()).
+  }
+
+  // Track a video texture so the loop knows it must keep ticking while the
+  // video plays (Three.js VideoTexture only updates when sampled).
+  trackVideoTexture(tex) {
+    if (!tex) return;
+    this._videoTextures.add(tex);
+    this._needsRender = true;
+    this._kickLoop();
+  }
+  untrackVideoTexture(tex) {
+    if (!tex) return;
+    this._videoTextures.delete(tex);
+  }
+
+  _hasPlayingVideo() {
+    for (const tex of this._videoTextures) {
+      const v = tex?.image;
+      if (v instanceof HTMLVideoElement && !v.paused && !v.ended) return true;
+    }
+    return false;
+  }
+
+  requestRender() { this._needsRender = true; this._kickLoop(); }
+
+  _kickLoop() {
+    if (this._rafId) return;
+    this._rafId = requestAnimationFrame(this._loop);
   }
 
   // Bootstrap the 3D mapled overlay. Called once main.js has constructed
   // both Editor2D and Viewer3D so the overlay can subscribe to editor events.
   attachEditor(editor) {
     if (this.mapledOverlay) this.mapledOverlay.dispose();
-    this.mapledOverlay = new MapledOverlay3D(this.scene, this.ledManager, editor);
+    this.mapledOverlay = new MapledOverlay3D(this.scene, this.ledManager, editor, this);
   }
 
   _setupLights() {
@@ -132,6 +182,7 @@ export class Viewer3D extends EventTarget {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+    this.requestRender();
   }
 
   setModel(root) {
@@ -160,6 +211,7 @@ export class Viewer3D extends EventTarget {
     });
 
     this.fitToObject(root);
+    this.requestRender();
     this.dispatchEvent(new CustomEvent('model-loaded', { detail: { root } }));
   }
 
@@ -181,6 +233,7 @@ export class Viewer3D extends EventTarget {
     this.camera.far = distance * 50;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+    this.requestRender();
   }
 
   setCameraPreset(preset) {
@@ -200,15 +253,17 @@ export class Viewer3D extends EventTarget {
     this.camera.position.set(center.x + p[0], center.y + p[1], center.z + p[2]);
     this.controls.target.copy(center);
     this.controls.update();
+    this.requestRender();
   }
 
-  setGridVisible(v) { this.grid.visible = v; this.axes.visible = v; }
+  setGridVisible(v) { this.grid.visible = v; this.axes.visible = v; this.requestRender(); }
   setWireframe(on) {
     this._wireframe = on;
     for (const m of this._allMeshes) {
       const mats = Array.isArray(m.material) ? m.material : [m.material];
       mats.forEach((mt) => { if (mt) mt.wireframe = on; });
     }
+    this.requestRender();
   }
 
   // ============ Picking ============
@@ -334,19 +389,31 @@ export class Viewer3D extends EventTarget {
   }
 
   // ============ Render Loop ============
+  // Render only when active AND (something changed OR a video is playing OR
+  // damping is in flight). When in 2D mode we skip render() entirely — this
+  // saves ~16ms/frame regardless of how complex the scene is.
   _loop() {
-    requestAnimationFrame(this._loop);
+    this._rafId = 0;
+    if (!this._active) return;
+
+    // OrbitControls damping needs update() called every frame to converge.
     this.controls.update();
-    const now = performance.now();
-    const dt = now - this._lastFrame;
-    this._lastFrame = now;
-    this._fpsAccum += dt; this._fpsCount++;
-    if (this._fpsAccum >= 500) {
-      this._fps = Math.round((this._fpsCount * 1000) / this._fpsAccum);
-      this._fpsAccum = 0; this._fpsCount = 0;
-      const el = document.getElementById('status-fps');
-      if (el) el.textContent = `${this._fps} FPS`;
+
+    const playing = this._hasPlayingVideo();
+    if (this._needsRender || playing) {
+      this._needsRender = false;
+      const now = performance.now();
+      const dt = now - this._lastFrame;
+      this._lastFrame = now;
+      this._fpsAccum += dt; this._fpsCount++;
+      if (this._fpsAccum >= 500) {
+        this._fps = Math.round((this._fpsCount * 1000) / this._fpsAccum);
+        this._fpsAccum = 0; this._fpsCount = 0;
+        const el = document.getElementById('status-fps');
+        if (el) el.textContent = `${this._fps} FPS`;
+      }
+      this.renderer.render(this.scene, this.camera);
     }
-    this.renderer.render(this.scene, this.camera);
+    this._kickLoop();
   }
 }

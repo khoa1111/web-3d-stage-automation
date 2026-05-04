@@ -31,6 +31,27 @@ export class LedManager extends EventTarget {
     this.pixelPitch = DEFAULT_PIXEL_PITCH;
     /** Guard used by main.js patches to suppress per-mesh undo inside batch operations. */
     this._inBatchAdd = false;
+    /** Suppress 'change' / 'selection' emits inside a batch; flushed on endBatch. */
+    this._batchDepth = 0;
+    this._pendingEmits = new Set();
+  }
+
+  // Run `fn` while suppressing 'change' / 'selection' emits — they fire once
+  // at the end. This is the difference between O(N) and O(N²) for auto-detect:
+  // every `add()` would otherwise trigger UI rebuild + 3D-overlay refresh +
+  // 2D editor render.
+  batch(fn) {
+    this.beginBatch();
+    try { return fn(); }
+    finally { this.endBatch(); }
+  }
+  beginBatch() { this._batchDepth++; }
+  endBatch() {
+    if (--this._batchDepth > 0) return;
+    if (this._batchDepth < 0) this._batchDepth = 0;
+    const types = [...this._pendingEmits];
+    this._pendingEmits.clear();
+    for (const t of types) this.dispatchEvent(new CustomEvent(t));
   }
 
   setModelRoot(root) {
@@ -159,6 +180,7 @@ export class LedManager extends EventTarget {
   addGroup(groupNode) {
     const added = [];
     this._inBatchAdd = true;
+    this.beginBatch();
     try {
       groupNode.traverse((o) => {
         if (o.isMesh && !this.has(o.uuid)) {
@@ -167,6 +189,7 @@ export class LedManager extends EventTarget {
         }
       });
     } finally {
+      this.endBatch();
       this._inBatchAdd = false;
     }
     return added;
@@ -190,6 +213,7 @@ export class LedManager extends EventTarget {
 
   removeGroup(groupNode) {
     this._inBatchAdd = true;
+    this.beginBatch();
     try {
       groupNode.traverse((o) => {
         if (o.isMesh) {
@@ -198,6 +222,7 @@ export class LedManager extends EventTarget {
         }
       });
     } finally {
+      this.endBatch();
       this._inBatchAdd = false;
     }
   }
@@ -396,7 +421,11 @@ export class LedManager extends EventTarget {
   // starting layout. Useful when the user wants the 2D arrangement to roughly
   // mirror how the LEDs are positioned on the back wall of the stage.
   autoArrangeFromWorld(scale = 100, originX = 60, originY = 60) {
-    const list = this.list();
+    // Skip orphans (LEDs whose mesh isn't in the current model). Their
+    // world.* fields can be stale or zero, which would have produced a
+    // 0×0 map2d rect — invisible in the 2D canvas AND skipped by the 3D
+    // overlay's mask, leaving "one panel without image" after auto-align.
+    const list = this.list().filter(l => l._mesh);
     if (!list.length) return;
     let minX = Infinity, minY = Infinity;
     for (const led of list) {
@@ -406,10 +435,10 @@ export class LedManager extends EventTarget {
     for (const led of list) {
       const wMm = led.realW;
       const hMm = led.realH;
-      const wPx = wMm * scale / 1000;
-      const hPx = hMm * scale / 1000;
-      // Flip Y because canvas Y grows downward and we want the top of the
-      // wall to render at the top of the canvas.
+      // Clamp so a degenerate panel (0 mm in some axis) still gets a usable
+      // 2D rect — the user can tweak it manually afterwards.
+      const wPx = Math.max(8, wMm * scale / 1000);
+      const hPx = Math.max(8, hMm * scale / 1000);
       const x = originX + (led.world.cx - led.world.sx / 2 - minX) * scale;
       const y = originY + (-(led.world.cy + led.world.sy / 2) + (minY)) * scale + 600;
       led.map2d.x = x;
@@ -622,7 +651,10 @@ export class LedManager extends EventTarget {
     };
   }
 
-  _emit(type) { this.dispatchEvent(new CustomEvent(type)); }
+  _emit(type) {
+    if (this._batchDepth > 0) { this._pendingEmits.add(type); return; }
+    this.dispatchEvent(new CustomEvent(type));
+  }
   on(type, handler) { this.addEventListener(type, handler); return () => this.removeEventListener(type, handler); }
 }
 

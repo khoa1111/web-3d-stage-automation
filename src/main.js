@@ -13,6 +13,11 @@ import { i18n, t } from './i18n.js';
 
 // ============ Module instances ============
 
+// Tracks the most recently-loaded model File. Set by handle3DFile() below;
+// read by SectionsManager when "Save with assets" is requested. Declared at
+// the top so the SectionsManager closure can capture it before initialization.
+let _currentModelFile = null;
+
 const ledManager = new LedManager();
 const threeContainer = $('#three-container');
 const viewer = new Viewer3D(threeContainer, ledManager);
@@ -20,7 +25,11 @@ const canvas2d = $('#canvas2d');
 const editor = new Editor2D(canvas2d, ledManager);
 const ui = new UI(ledManager, viewer, editor);
 const undo = new UndoStack(ledManager, editor, { max: 5 });
-const sections = new SectionsManager(ledManager, viewer, editor, undo);
+const sections = new SectionsManager(ledManager, viewer, editor, undo, {
+  getModelFile: () => _currentModelFile,
+  loadModelFromFile: (file) => handle3DFile(file),
+  loadMapledFromFile: (file) => loadMapledFile(file),
+});
 
 // 3D mapled overlay (depends on editor; construct after both exist).
 viewer.attachEditor(editor);
@@ -66,6 +75,7 @@ function setMode(mode) {
   b2.setAttribute('aria-selected', String(!isThree));
   updateModeStatus();
 
+  viewer.setActive(isThree);
   if (isThree) requestAnimationFrame(() => viewer.resize());
   else requestAnimationFrame(() => { editor.resize(); editor.render(); });
 }
@@ -84,6 +94,7 @@ async function handle3DFile(file) {
   showLoading(`${t('toast.loaded')} ${file.name}…`);
   try {
     const { root, fileName } = await loadModelFromFile(file);
+    _currentModelFile = file;
     afterModelLoaded(root, fileName);
     toast(`${t('toast.loaded')} ${fileName}`, 'success');
   } catch (err) {
@@ -135,7 +146,7 @@ async function loadMapledFile(file) {
       video.addEventListener('loadeddata', res, { once: true });
       video.addEventListener('error', () => rej(new Error('Could not read video')), { once: true });
     });
-    editor.setMapledImage(video);
+    editor.setMapledImage(video, file);
     videoSync.refresh();
     setMode('2d');
     toast(t('toast.videoLoaded', { w: video.videoWidth, h: video.videoHeight, time: formatTime(video.duration) }), 'success');
@@ -148,7 +159,7 @@ async function loadMapledFile(file) {
         img.onerror = () => rej(new Error('Could not read image'));
         img.src = url;
       });
-      editor.setMapledImage(img);
+      editor.setMapledImage(img, file);
       videoSync.refresh();
       setMode('2d');
       toast(t('toast.imageLoaded', { w: img.naturalWidth, h: img.naturalHeight }), 'success');
@@ -334,35 +345,45 @@ $('#btn-autodetect').addEventListener('click', () => {
   }
   undo.pushSnapshot('auto-detect');
 
+  // Single batched mutation. Without this, each add() emits 'change', which
+  // triggers the LED list rebuild + 3D overlay refresh + 2D editor render —
+  // O(N²) work for N detected panels and a guaranteed UI freeze on a real
+  // stage model. batch() defers all events until the entire detection is
+  // done, so the UI only updates once.
   let total = 0;
   ledManager._inBatchAdd = true;
-  try {
+  ledManager.batch(() => {
     const LED_RE = /led|screen|display|panel/i;
+
+    // Pass 1: meshes inside any node whose name contains a LED keyword.
     viewer.modelRoot.traverse((node) => {
       if (!node.isMesh && LED_RE.test(node.name || '')) {
         node.traverse((o) => {
           if (o.isMesh && !ledManager.has(o.uuid)) {
-            const r = ledManager.add(o);
-            if (r) total++;
+            if (ledManager.add(o)) total++;
           }
         });
       }
     });
 
-    const byName = viewer.autoDetectLEDs((m) => {
-      if (ledManager.has(m.uuid)) return false;
-      return looksLikeLed(m);
+    // Pass 2: meshes whose own name / material looks like a LED.
+    viewer.modelRoot.traverse((o) => {
+      if (o.isMesh && !ledManager.has(o.uuid) && looksLikeLed(o)) {
+        if (ledManager.add(o)) total++;
+      }
     });
-    total += byName.length;
 
+    // Pass 3: meshes the same size as already-marked LEDs.
     if (ledManager.list().length > 0) {
       const pred = ledManager.sizePredicate(0.05);
-      const bySize = viewer.autoDetectLEDs((m) => !ledManager.has(m.uuid) && pred(m));
-      total += bySize.length;
+      viewer.modelRoot.traverse((o) => {
+        if (o.isMesh && !ledManager.has(o.uuid) && pred(o)) {
+          if (ledManager.add(o)) total++;
+        }
+      });
     }
-  } finally {
-    ledManager._inBatchAdd = false;
-  }
+  });
+  ledManager._inBatchAdd = false;
 
   if (total) toast(t('toast.detected', { n: total }), 'success');
   else toast(t('toast.detected.none'), 'info', 5000);
@@ -372,7 +393,11 @@ $('#btn-clear-led').addEventListener('click', () => {
   if (!ledManager.list().length) return;
   if (!confirm(t('toast.confirmClear'))) return;
   undo.pushSnapshot('clear-all-leds');
-  for (const led of ledManager.list()) ledManager.remove(led.id);
+  ledManager._inBatchAdd = true;
+  ledManager.batch(() => {
+    for (const led of ledManager.list()) ledManager.remove(led.id);
+  });
+  ledManager._inBatchAdd = false;
 });
 
 // ============ 3D camera presets ============
@@ -465,6 +490,11 @@ $('#auto-arrange').addEventListener('click', () => {
   if (!ledManager.list().length) { toast(t('toast.noLeds'), 'warn'); return; }
   undo.pushSnapshot('auto-arrange');
   ledManager.autoArrangeFromWorld(120, 60, 60);
+  // After re-positioning every LED, the previously fitted mapled is almost
+  // certainly off the new layout — re-fit so the "Mask" preview and the 3D
+  // overlay still cover every panel. autoFitMapled() is a no-op when the
+  // active group has no mapled image.
+  editor.autoFitMapled();
   editor.resetView();
   toast(t('toast.aligned'), 'success');
 });

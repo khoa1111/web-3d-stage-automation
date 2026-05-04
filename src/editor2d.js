@@ -167,7 +167,7 @@ export class Editor2D extends EventTarget {
     this.render();
   }
 
-  setMapledImage(src) {
+  setMapledImage(src, sourceFile = null) {
     const key = this._activeKey();
     const g = this._ensureGroup(key);
 
@@ -181,6 +181,8 @@ export class Editor2D extends EventTarget {
     }
 
     g.image = src;
+    // Stash the original File so save-with-assets can embed the bytes.
+    if (sourceFile) g._sourceFile = sourceFile;
     if (src) {
       g.x = 60; g.y = 60; g.scale = 1;
     }
