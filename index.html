@@ -23,26 +23,29 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <img class="logo-img" src="./assets/FS_wth_favicon.svg" alt="FS" width="36" height="36" />
+      <img class="logo-img" src="./assets/FS_wth_favicon.svg" alt="FS" width="32" height="32" />
       <div>
         <div class="brand-title" data-i18n="app.title">Stage LED Mapping</div>
-        <div class="brand-sub" data-i18n="app.subtitle">◆ Felic Studio · 3D → 2D</div>
+        <div class="brand-sub" data-i18n="app.subtitle">◆ Felic Studio</div>
       </div>
     </div>
 
     <div class="topbar-actions">
-      <label class="btn btn-primary" data-i18n-title="topbar.openModel.title">
-        <input id="file-3d" type="file" accept=".gltf,.glb,.obj,.dae,.fbx" hidden />
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-        <span data-i18n="topbar.openModel">Open 3D Model</span>
-      </label>
-      <label class="btn btn-navy" data-i18n-title="topbar.mapled.title">
-        <input id="file-mapled" type="file" accept="image/*,video/*" hidden />
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <span data-i18n="topbar.mapled">Mapled / Video</span>
-      </label>
+      <!-- File actions group -->
+      <div class="topbar-group">
+        <label class="btn btn-primary" data-i18n-title="topbar.openModel.title">
+          <input id="file-3d" type="file" accept=".gltf,.glb,.obj,.dae,.fbx" hidden />
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span data-i18n="topbar.openModel">3D Model</span>
+        </label>
+        <label class="btn btn-navy" data-i18n-title="topbar.mapled.title">
+          <input id="file-mapled" type="file" accept="image/*,video/*" hidden />
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+          <span data-i18n="topbar.mapled">Mapled</span>
+        </label>
+      </div>
 
-      <!-- Global video controls (visible in both 2D & 3D modes once a video is loaded) -->
+      <!-- Global video controls -->
       <div id="video-controls" class="topbar-video hidden">
         <button id="vid-play" class="btn btn-navy btn-sm" title="Play / Pause" aria-label="Play / Pause">▶</button>
         <input id="vid-seek" type="range" min="0" max="1000" value="0" />
@@ -50,18 +53,31 @@
       </div>
 
       <div class="divider"></div>
+
+      <!-- Mode switch -->
       <div class="mode-switch" role="tablist" aria-label="Working mode">
         <button id="mode-3d" class="mode-btn active" role="tab" aria-selected="true" data-i18n="topbar.mode3d">3D View</button>
         <button id="mode-2d" class="mode-btn" role="tab" aria-selected="false" data-i18n="topbar.mode2d">2D Mapping</button>
       </div>
+
+      <span class="spacer"></span>
+
+      <!-- Project actions -->
+      <div class="topbar-group">
+        <button id="btn-undo" class="btn btn-navy" data-i18n-title="toolbar.undo.title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          <span data-i18n="toolbar.undo">Undo</span>
+        </button>
+      </div>
+
       <div class="divider"></div>
 
       <button id="btn-save-project" class="btn btn-success" data-i18n-title="topbar.save.title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
         <span data-i18n="topbar.save">Save</span>
       </button>
       <button id="btn-open-project" class="btn btn-navy" data-i18n-title="topbar.open.title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
         <span data-i18n="topbar.open">Projects</span>
       </button>
       <input id="file-project" type="file" accept=".fsp,application/json,.json" hidden />
@@ -69,50 +85,62 @@
   </header>
 
   <main class="layout">
-    <!-- LEFT SIDEBAR: Object tree + LED list -->
-    <aside class="sidebar sidebar-left">
-      <div class="panel" style="flex:1.4">
-        <div class="panel-header">
-          <span data-i18n="panel.objects">◆ Object Hierarchy</span>
-          <span id="obj-count" class="badge">0</span>
+    <!-- LEFT SIDEBAR with edge strip -->
+    <div class="sidebar-wrap sidebar-wrap-left">
+      <aside class="sidebar sidebar-left" id="sidebar-left">
+        <div class="panel" style="flex:1.4">
+          <div class="panel-header">
+            <span data-i18n="panel.objects">◆ Object Hierarchy</span>
+            <span id="obj-count" class="badge">0</span>
+          </div>
+          <div class="panel-body">
+            <div class="search-row">
+              <span class="search-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              </span>
+              <input id="search-obj" type="search" data-i18n-attr="placeholder:search.objects" placeholder="Search by name…" />
+            </div>
+            <div class="auto-detect-row">
+              <button id="btn-autodetect" class="btn btn-sm btn-primary" data-i18n="btn.autodetect">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                Auto-detect LEDs
+              </button>
+              <button id="btn-clear-led" class="btn btn-sm btn-ghost" data-i18n="btn.clearAll">Clear all</button>
+            </div>
+            <ul id="object-tree" class="object-tree"></ul>
+            <div id="empty-tree" class="empty-state">
+              <div data-i18n="tree.empty">No model loaded</div>
+              <small data-i18n="tree.empty.sub">Import a SketchUp export (.dae / .obj / .gltf / .fbx) to begin</small>
+            </div>
+          </div>
         </div>
-        <div class="panel-body">
-          <div class="search-row">
-            <input id="search-obj" type="search" data-i18n-attr="placeholder:search.objects" placeholder="Search by name…" />
-          </div>
-          <div class="auto-detect-row">
-            <button id="btn-autodetect" class="btn btn-sm btn-primary" data-i18n="btn.autodetect">Auto-detect LEDs</button>
-            <button id="btn-clear-led" class="btn btn-sm btn-ghost" data-i18n="btn.clearAll">Clear all</button>
-          </div>
-          <ul id="object-tree" class="object-tree"></ul>
-          <div id="empty-tree" class="empty-state">
-            <div data-i18n="tree.empty">No model loaded</div>
-            <small data-i18n="tree.empty.sub">Import a SketchUp export (.dae / .obj / .gltf / .fbx) to begin</small>
-          </div>
-        </div>
-      </div>
 
-      <div class="panel" style="flex:1">
-        <div class="panel-header">
-          <span data-i18n="panel.leds">◆ LED Panels</span>
-          <span id="led-count" class="badge badge-accent">0</span>
-        </div>
-        <div class="panel-body">
-          <div class="led-actions-row">
-            <button id="btn-group-selected" class="btn btn-sm btn-primary led-actions-primary" data-i18n="btn.groupSelected" data-i18n-title="btn.groupSelected.title" disabled>Group selected</button>
-            <button id="btn-freeze-all" class="btn btn-sm btn-navy btn-icon-text led-actions-freeze" data-i18n-title="topbar.freezeAll.title" title="Freeze all">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              <span id="btn-freeze-all-label" data-i18n="topbar.freezeAll">Freeze all</span>
-            </button>
+        <div class="panel" style="flex:1">
+          <div class="panel-header">
+            <span data-i18n="panel.leds">◆ LED Panels</span>
+            <span id="led-count" class="badge badge-accent">0</span>
           </div>
-          <ul id="led-list" class="led-list"></ul>
-          <div id="empty-led" class="empty-state">
-            <div data-i18n="led.empty">No LED panels marked</div>
-            <small data-i18n="led.empty.sub">Click objects in the 3D view or use Auto-detect</small>
+          <div class="panel-body">
+            <div class="led-actions-row">
+              <button id="btn-group-selected" class="btn btn-sm btn-primary led-actions-primary" data-i18n="btn.groupSelected" data-i18n-title="btn.groupSelected.title" disabled>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.84z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>
+                Group selected
+              </button>
+              <button id="btn-freeze-all" class="btn btn-sm btn-navy btn-icon-text led-actions-freeze" data-i18n-title="topbar.freezeAll.title" title="Freeze all">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span id="btn-freeze-all-label" data-i18n="topbar.freezeAll">Freeze</span>
+              </button>
+            </div>
+            <ul id="led-list" class="led-list"></ul>
+            <div id="empty-led" class="empty-state">
+              <div data-i18n="led.empty">No LED panels marked</div>
+              <small data-i18n="led.empty.sub">Click objects in the 3D view or use Auto-detect</small>
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+      <div class="sidebar-edge" id="edge-left" title="Collapse / expand panel"></div>
+    </div>
 
     <!-- CENTER: 3D / 2D canvas -->
     <section class="workspace">
@@ -128,12 +156,10 @@
           <button id="cam-fit"      class="tool-btn" data-i18n-title="3d.fit.title" data-i18n="3d.fit">Fit</button>
           <button id="toggle-grid"  class="tool-btn active" data-i18n-title="3d.grid.title" data-i18n="3d.grid">Grid</button>
           <button id="toggle-wire"  class="tool-btn" data-i18n-title="3d.wire.title" data-i18n="3d.wire">Wire</button>
-          <button id="toggle-overlay-3d" class="tool-btn active" data-i18n-title="3d.overlay.title" data-i18n="3d.overlay">Mapled overlay</button>
-          <span class="tool-sep"></span>
-          <button id="btn-undo" class="tool-btn" data-i18n-title="toolbar.undo.title" data-i18n="toolbar.undo">↩ Undo</button>
+          <button id="toggle-overlay-3d" class="tool-btn active" data-i18n-title="3d.overlay.title" data-i18n="3d.overlay">Overlay</button>
         </div>
         <div class="view-hint" data-i18n="hint.3d">
-          <kbd>Click</kbd> mark LED · <kbd>Drag</kbd> orbit
+          <kbd>Click</kbd> mark LED · <kbd>Drag</kbd> orbit · <kbd>Space</kbd> fit
         </div>
         <div id="loading-overlay" class="loading-overlay hidden">
           <div class="spinner"></div>
@@ -193,57 +219,60 @@
       </div>
     </section>
 
-    <!-- RIGHT SIDEBAR: Properties -->
-    <aside class="sidebar sidebar-right">
-      <div class="panel">
-        <div class="panel-header">
-          <span data-i18n="panel.props">◆ Properties</span>
-          <span id="props-name" class="badge">—</span>
-        </div>
-        <div class="panel-body" id="props-body">
-          <div class="empty-state">
-            <div data-i18n="props.empty">No LED selected</div>
-            <small data-i18n="props.empty.sub">Select a panel in the 3D or 2D view to edit its properties</small>
+    <!-- RIGHT SIDEBAR with edge strip -->
+    <div class="sidebar-wrap sidebar-wrap-right">
+      <div class="sidebar-edge" id="edge-right" title="Collapse / expand panel"></div>
+      <aside class="sidebar sidebar-right" id="sidebar-right">
+        <div class="panel">
+          <div class="panel-header">
+            <span data-i18n="panel.props">◆ Properties</span>
+            <span id="props-name" class="badge">—</span>
           </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header" data-i18n="panel.overview">◆ Project Overview</div>
-        <div class="panel-body">
-          <div class="stat-grid">
-            <div class="stat">
-              <div class="stat-label" data-i18n="stat.leds">LED Panels</div>
-              <div class="stat-value" id="stat-total">0</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label" data-i18n="stat.totalPxW">Total px W</div>
-              <div class="stat-value" id="stat-pix-w">0</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label" data-i18n="stat.maxPxH">Max px H</div>
-              <div class="stat-value" id="stat-pix-h">0</div>
-            </div>
-            <div class="stat">
-              <div class="stat-label" data-i18n="stat.area">Area m²</div>
-              <div class="stat-value" id="stat-area">0.00</div>
+          <div class="panel-body" id="props-body">
+            <div class="empty-state">
+              <div data-i18n="props.empty">No LED selected</div>
+              <small data-i18n="props.empty.sub">Select a panel in the 3D or 2D view to edit its properties</small>
             </div>
           </div>
         </div>
-      </div>
 
-      <div class="panel">
-        <div class="panel-header" data-i18n="panel.guide">◆ Quick Guide</div>
-        <div class="panel-body small-text">
-          <ol class="howto">
-            <li data-i18n="guide.l1"></li>
-            <li data-i18n="guide.l2"></li>
-            <li data-i18n="guide.l3"></li>
-            <li data-i18n="guide.l4"></li>
-          </ol>
+        <div class="panel">
+          <div class="panel-header" data-i18n="panel.overview">◆ Project Overview</div>
+          <div class="panel-body">
+            <div class="stat-grid">
+              <div class="stat">
+                <div class="stat-label" data-i18n="stat.leds">LED Panels</div>
+                <div class="stat-value" id="stat-total">0</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label" data-i18n="stat.totalPxW">Total px W</div>
+                <div class="stat-value" id="stat-pix-w">0</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label" data-i18n="stat.maxPxH">Max px H</div>
+                <div class="stat-value" id="stat-pix-h">0</div>
+              </div>
+              <div class="stat">
+                <div class="stat-label" data-i18n="stat.area">Area m²</div>
+                <div class="stat-value" id="stat-area">0.00</div>
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-    </aside>
+
+        <div class="panel">
+          <div class="panel-header" data-i18n="panel.guide">◆ Quick Guide</div>
+          <div class="panel-body small-text">
+            <ol class="howto">
+              <li data-i18n="guide.l1"></li>
+              <li data-i18n="guide.l2"></li>
+              <li data-i18n="guide.l3"></li>
+              <li data-i18n="guide.l4"></li>
+            </ol>
+          </div>
+        </div>
+      </aside>
+    </div>
   </main>
 
   <footer class="statusbar">
@@ -262,6 +291,16 @@
   <!-- Project dialogs -->
   <dialog id="dlg-projects"></dialog>
   <dialog id="dlg-restore"></dialog>
+
+  <!-- Sidebar collapse/expand via edge strips -->
+  <script>
+    document.getElementById('edge-left').addEventListener('click', () => {
+      document.getElementById('sidebar-left').classList.toggle('collapsed');
+    });
+    document.getElementById('edge-right').addEventListener('click', () => {
+      document.getElementById('sidebar-right').classList.toggle('collapsed');
+    });
+  </script>
 
   <script type="module" src="./src/main.js"></script>
 </body>
